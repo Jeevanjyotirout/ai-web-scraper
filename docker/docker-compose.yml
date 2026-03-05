@@ -1,0 +1,301 @@
+####################################################################
+# DataVault — AI Web Scraper Stack
+# Services: nginx · frontend · backend · worker · redis · qdrant · ollama
+####################################################################
+
+name: datavault
+
+# ── Shared env defaults ─────────────────────────────────────────
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "20m"
+    max-file: "5"
+
+x-restart: &default-restart
+  restart: unless-stopped
+
+x-healthcheck-defaults: &hc-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 5
+  start_period: 30s
+
+####################################################################
+services:
+
+  # ── Reverse Proxy ────────────────────────────────────────────
+  nginx:
+    <<: *default-restart
+    build:
+      context: ./nginx
+      dockerfile: Dockerfile
+    container_name: datavault-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      frontend:
+        condition: service_healthy
+      backend:
+        condition: service_healthy
+    networks:
+      - public
+      - internal
+    volumes:
+      - nginx_logs:/var/log/nginx
+      - ./nginx/ssl:/etc/nginx/ssl:ro          # mount real certs here
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "curl", "-fsS", "http://localhost/health"]
+    logging: *default-logging
+
+  # ── Frontend — Next.js ───────────────────────────────────────
+  frontend:
+    <<: *default-restart
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://backend:8000}
+    container_name: datavault-frontend
+    expose:
+      - "3000"
+    environment:
+      NODE_ENV:            production
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-https://localhost/api}
+      NEXTAUTH_SECRET:     ${NEXTAUTH_SECRET:-changeme_in_prod}
+      NEXTAUTH_URL:        ${NEXTAUTH_URL:-https://localhost}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - internal
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+    logging: *default-logging
+
+  # ── Backend — FastAPI ────────────────────────────────────────
+  backend:
+    <<: *default-restart
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: datavault-backend
+    expose:
+      - "8000"
+    environment:
+      # App
+      APP_ENV:              ${APP_ENV:-production}
+      SECRET_KEY:           ${SECRET_KEY:-changeme_secret_32chars_minimum}
+      ALLOWED_ORIGINS:      ${ALLOWED_ORIGINS:-https://localhost}
+      # Redis
+      REDIS_URL:            redis://:${REDIS_PASSWORD:-redispass}@redis:6379/0
+      CELERY_BROKER_URL:    redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
+      CELERY_RESULT_BACKEND:redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
+      # Vector DB
+      QDRANT_HOST:          qdrant
+      QDRANT_PORT:          6333
+      QDRANT_API_KEY:       ${QDRANT_API_KEY:-}
+      # Local LLM
+      OLLAMA_BASE_URL:      http://ollama:11434
+      OLLAMA_MODEL:         ${OLLAMA_MODEL:-mistral}
+      # Scraping
+      MAX_CONCURRENT_JOBS:  ${MAX_CONCURRENT_JOBS:-5}
+      REQUEST_TIMEOUT:      ${REQUEST_TIMEOUT:-30}
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - internal
+    volumes:
+      - scrape_data:/app/data
+      - backend_logs:/app/logs
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/health"]
+    logging: *default-logging
+
+  # ── Celery Worker ────────────────────────────────────────────
+  worker:
+    <<: *default-restart
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: datavault-worker
+    command: >
+      celery -A tasks.celery_app worker
+        --loglevel=info
+        --concurrency=4
+        --queues=scrape,embed,export
+        --prefetch-multiplier=1
+        --max-tasks-per-child=100
+    environment:
+      APP_ENV:               ${APP_ENV:-production}
+      REDIS_URL:             redis://:${REDIS_PASSWORD:-redispass}@redis:6379/0
+      CELERY_BROKER_URL:     redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
+      QDRANT_HOST:           qdrant
+      QDRANT_PORT:           6333
+      OLLAMA_BASE_URL:       http://ollama:11434
+      OLLAMA_MODEL:          ${OLLAMA_MODEL:-mistral}
+    depends_on:
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_healthy
+    networks:
+      - internal
+    volumes:
+      - scrape_data:/app/data
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "celery", "-A", "tasks.celery_app", "inspect", "ping"]
+    logging: *default-logging
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+      resources:
+        limits:
+          cpus:   "2.0"
+          memory: "2G"
+
+  # ── Celery Beat — scheduler ──────────────────────────────────
+  beat:
+    <<: *default-restart
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: datavault-beat
+    command: >
+      celery -A tasks.celery_app beat
+        --loglevel=info
+        --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      CELERY_BROKER_URL:     redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
+      CELERY_RESULT_BACKEND: redis://:${REDIS_PASSWORD:-redispass}@redis:6379/2
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    logging: *default-logging
+
+  # ── Redis ────────────────────────────────────────────────────
+  redis:
+    <<: *default-restart
+    image: redis:7.2-alpine
+    container_name: datavault-redis
+    command: >
+      redis-server
+        --requirepass ${REDIS_PASSWORD:-redispass}
+        --maxmemory 512mb
+        --maxmemory-policy allkeys-lru
+        --save 60 1000
+        --appendonly yes
+        --appendfsync everysec
+    expose:
+      - "6379"
+    networks:
+      - internal
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-redispass}", "ping"]
+    logging: *default-logging
+
+  # ── Qdrant — Vector Database ─────────────────────────────────
+  qdrant:
+    <<: *default-restart
+    image: qdrant/qdrant:v1.9.2
+    container_name: datavault-qdrant
+    expose:
+      - "6333"   # REST
+      - "6334"   # gRPC
+    environment:
+      QDRANT__SERVICE__API_KEY:        ${QDRANT_API_KEY:-}
+      QDRANT__SERVICE__GRPC_PORT:      6334
+      QDRANT__LOG_LEVEL:               INFO
+      QDRANT__STORAGE__ON_DISK_PAYLOAD: "true"
+    networks:
+      - internal
+    volumes:
+      - qdrant_data:/qdrant/storage
+      - ./config/qdrant.yaml:/qdrant/config/production.yaml:ro
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "curl", "-fsS", "http://localhost:6333/healthz"]
+    logging: *default-logging
+
+  # ── Ollama — Local LLM ───────────────────────────────────────
+  ollama:
+    <<: *default-restart
+    image: ollama/ollama:latest
+    container_name: datavault-ollama
+    expose:
+      - "11434"
+    environment:
+      OLLAMA_KEEP_ALIVE:   ${OLLAMA_KEEP_ALIVE:-5m}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-2}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED:-1}
+    networks:
+      - internal
+    volumes:
+      - ollama_models:/root/.ollama
+    # Uncomment for GPU support (requires NVIDIA Container Toolkit):
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+    healthcheck:
+      <<: *hc-defaults
+      test: ["CMD", "curl", "-fsS", "http://localhost:11434/api/version"]
+    logging: *default-logging
+
+  # ── Flower — Celery monitoring (optional) ────────────────────
+  flower:
+    <<: *default-restart
+    image: mher/flower:2.0
+    container_name: datavault-flower
+    command: >
+      celery --broker=redis://:${REDIS_PASSWORD:-redispass}@redis:6379/1
+      flower --port=5555 --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASS:-flowerpass}
+    expose:
+      - "5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - internal
+    profiles:
+      - monitoring
+    logging: *default-logging
+
+####################################################################
+networks:
+  public:
+    driver: bridge
+  internal:
+    driver: bridge
+    internal: true
+
+####################################################################
+volumes:
+  redis_data:
+    driver: local
+  qdrant_data:
+    driver: local
+  ollama_models:
+    driver: local
+  scrape_data:
+    driver: local
+  backend_logs:
+    driver: local
+  nginx_logs:
+    driver: local

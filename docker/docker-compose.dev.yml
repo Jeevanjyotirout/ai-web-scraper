@@ -1,0 +1,53 @@
+########################################################################
+# docker-compose.dev.yml — Development overrides
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+########################################################################
+
+services:
+
+  nginx:
+    ports: ["80:80"]    # skip TLS in dev
+
+  frontend:
+    build:
+      target: deps
+    command: npm run dev
+    environment:
+      NODE_ENV: development
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    ports: ["3000:3000"]
+
+  backend:
+    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload --log-level debug
+    environment:
+      APP_ENV:   development
+      LOG_LEVEL: debug
+    volumes:
+      - ./backend:/app
+    ports: ["8000:8000"]
+
+  worker:
+    command: >
+      celery -A tasks.celery_app worker
+        --loglevel=debug --concurrency=2
+        --queues=scrape,embed,export
+    volumes:
+      - ./backend:/app
+
+  redis:
+    ports: ["6379:6379"]
+
+  qdrant:
+    ports:
+      - "6333:6333"   # REST + dashboard: http://localhost:6333/dashboard
+      - "6334:6334"   # gRPC
+
+  ollama:
+    ports: ["11434:11434"]
+
+  flower:
+    profiles: []       # always enabled in dev
+    ports: ["5555:5555"]
