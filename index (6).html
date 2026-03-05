@@ -1,0 +1,1583 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Web Scraper – Automated Data Extraction Platform</title>
+<meta name="description" content="AI-powered web scraping platform. Extract structured datasets from any website using local AI. Powered by TinyLlama, FAISS and Playwright.">
+<style>
+/* =====================================================
+   RESET & BASE  — no external deps, everything inline
+   ===================================================== */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:        #080c14;
+  --bg-card:   #111827;
+  --bg-input:  #0d1117;
+  --bg-hover:  #1a2234;
+  --border:    #1e2d45;
+  --border-hi: #2d4060;
+  --purple:    #7c3aed;
+  --purple-lt: #a855f7;
+  --green:     #00ffa3;
+  --cyan:      #00d4ff;
+  --red:       #f87171;
+  --yellow:    #fbbf24;
+  --blue:      #60a5fa;
+  --text:      #e2e8f0;
+  --muted:     #8b9fc0;
+  --dim:       #4a5568;
+  --radius:    12px;
+  --radius-lg: 16px;
+}
+
+html { scroll-behavior: smooth; font-size: 16px; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  line-height: 1.6;
+  min-height: 100vh;
+  overflow-x: hidden;
+  /* NO cursor:none — that was the original killer bug */
+}
+
+/* =====================================================
+   SCROLLBAR
+   ===================================================== */
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: #050810; }
+::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--purple); }
+
+::selection { background: rgba(124,58,237,.35); color: #fff; }
+
+/* =====================================================
+   DECORATIVE — pointer-events always NONE
+   ===================================================== */
+#bg-canvas {
+  position: fixed;
+  inset: 0;
+  z-index: 0;           /* below everything */
+  pointer-events: none; /* NEVER intercept clicks */
+  display: block;
+}
+
+.blob {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none; /* NEVER intercept clicks */
+  filter: blur(70px);
+  will-change: transform;
+  animation: blobFloat 12s ease-in-out infinite;
+}
+.blob-2 { animation-duration: 16s; animation-direction: reverse; }
+
+@keyframes blobFloat {
+  0%,100% { transform: translate(0,0) scale(1); }
+  33%      { transform: translate(25px,-18px) scale(1.04); }
+  66%      { transform: translate(-18px,12px) scale(0.97); }
+}
+
+/* =====================================================
+   LAYOUT
+   ===================================================== */
+.site-wrap {
+  position: relative;
+  z-index: 1; /* above canvas, all interactive content here */
+}
+
+/* =====================================================
+   NAV
+   ===================================================== */
+.nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  height: 56px;
+  background: rgba(8,12,20,.92);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+}
+.nav-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  text-decoration: none;
+}
+.nav-logo {
+  width: 28px; height: 28px;
+  background: rgba(124,58,237,.2);
+  border: 1px solid rgba(124,58,237,.4);
+  border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+}
+.nav-title {
+  font-weight: 700;
+  font-size: .9rem;
+  color: #fff;
+  letter-spacing: -.3px;
+}
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.nav-link {
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .85rem;
+  transition: color .2s;
+}
+.nav-link:hover { color: #fff; }
+.nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--border-hi);
+  color: var(--muted);
+  text-decoration: none;
+  font-size: .8rem;
+  font-family: 'Courier New', monospace;
+  transition: all .2s;
+}
+.nav-btn:hover { border-color: var(--purple-lt); color: #fff; }
+.nav-ham {
+  display: none;
+  background: none;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+}
+.mobile-menu {
+  display: none;
+  position: fixed;
+  top: 56px; left: 0; right: 0;
+  z-index: 99;
+  background: rgba(8,12,20,.97);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  flex-direction: column;
+  gap: 16px;
+}
+.mobile-menu.open { display: flex; }
+.mobile-menu a { color: var(--muted); text-decoration: none; font-size: .9rem; }
+.mobile-menu a:hover { color: #fff; }
+
+/* =====================================================
+   HERO
+   ===================================================== */
+.hero {
+  position: relative;
+  overflow: hidden;
+  padding: 120px 24px 80px;
+  text-align: center;
+}
+.hero-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  border-radius: 999px;
+  border: 1px solid rgba(124,58,237,.35);
+  background: rgba(124,58,237,.1);
+  color: #a78bfa;
+  font-size: .75rem;
+  font-family: 'Courier New', monospace;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  margin-bottom: 28px;
+}
+.badge-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--purple-lt);
+  animation: pulseDot 2s ease-in-out infinite;
+}
+@keyframes pulseDot { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.5;transform:scale(.8)} }
+
+.hero-h1 {
+  font-size: clamp(2.8rem, 8vw, 5rem);
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -2px;
+  color: #fff;
+  margin-bottom: 20px;
+}
+.grad-text {
+  background: linear-gradient(135deg, #7c3aed, #00ffa3);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+.hero-sub {
+  font-size: 1.1rem;
+  color: var(--muted);
+  max-width: 520px;
+  margin: 0 auto 32px;
+  line-height: 1.7;
+}
+.hero-sub span { color: var(--dim); font-size: .95rem; }
+.hero-links {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.hero-lnk {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  text-decoration: none;
+  font-size: .875rem;
+  transition: color .2s;
+}
+.hero-lnk:hover { color: #fff; }
+
+/* =====================================================
+   FEATURE PILLS
+   ===================================================== */
+.pills {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px 48px;
+}
+.pill {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  transition: border-color .2s;
+}
+.pill:hover { border-color: var(--border-hi); }
+.pill-icon { width: 20px; height: 20px; }
+.pill-name { font-weight: 600; font-size: .875rem; color: #fff; }
+.pill-desc { font-size: .775rem; color: var(--dim); line-height: 1.4; }
+
+/* =====================================================
+   SECTION HEADER
+   ===================================================== */
+.section-label {
+  font-size: .7rem;
+  font-family: 'Courier New', monospace;
+  text-transform: uppercase;
+  letter-spacing: .25em;
+  color: rgba(124,58,237,.6);
+  display: block;
+  margin-bottom: 8px;
+}
+.section-h2 {
+  font-size: clamp(1.8rem, 4vw, 2.8rem);
+  font-weight: 800;
+  color: #fff;
+  letter-spacing: -1px;
+  line-height: 1.1;
+  margin-bottom: 8px;
+}
+.section-sub {
+  font-size: .9rem;
+  color: var(--muted);
+  margin-bottom: 32px;
+}
+
+/* =====================================================
+   SCRAPER SECTION
+   ===================================================== */
+.scraper-section {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 0 24px 64px;
+}
+.scraper-header { text-align: center; margin-bottom: 32px; }
+.demo-note {
+  display: inline-block;
+  font-size: .8rem;
+  color: var(--dim);
+  margin-top: 4px;
+}
+.demo-note strong { color: var(--green); }
+
+.scraper-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+/* =====================================================
+   CARD
+   ===================================================== */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 24px;
+}
+.card-anim-border {
+  /* Animated gradient border wrapper */
+  padding: 1px;
+  border-radius: var(--radius-lg);
+  background: linear-gradient(135deg, #7c3aed, #00ffa3, #00d4ff, #7c3aed);
+  background-size: 300% 300%;
+  animation: borderSpin 4s ease infinite;
+}
+@keyframes borderSpin {
+  0%   { background-position: 0% 50%; }
+  50%  { background-position: 100% 50%; }
+  100% { background-position: 0% 50%; }
+}
+.card-inner {
+  background: var(--bg-card);
+  border-radius: calc(var(--radius-lg) - 1px);
+  padding: 24px;
+  height: 100%;
+}
+
+/* =====================================================
+   FORM CHROME
+   ===================================================== */
+.win-chrome {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+.win-dot {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+}
+.win-label {
+  margin-left: 8px;
+  font-size: .75rem;
+  font-family: 'Courier New', monospace;
+  color: var(--dim);
+}
+
+/* =====================================================
+   FORM ELEMENTS
+   All get explicit, non-conflicting styles.
+   No z-index tricks needed — just clean layout.
+   ===================================================== */
+.form-group { margin-bottom: 20px; }
+
+.form-label {
+  display: block;
+  font-size: .7rem;
+  font-family: 'Courier New', monospace;
+  text-transform: uppercase;
+  letter-spacing: .15em;
+  color: #a78bfa;
+  margin-bottom: 8px;
+}
+.form-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+/* THE KEY CSS — inputs that DEFINITELY work */
+.form-input,
+.form-textarea {
+  display: block;
+  width: 100%;
+  background: var(--bg-input);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: .875rem;
+  font-family: 'Courier New', monospace;
+  padding: 12px 16px;
+  /* Explicitly allow ALL interactions */
+  pointer-events: all;
+  user-select: text;
+  -webkit-user-select: text;
+  cursor: text;
+  /* No z-index games — just normal flow */
+  position: static;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  transition: border-color .2s, box-shadow .2s;
+}
+.form-input[type="url"] { padding-left: 44px; }
+.form-input:focus,
+.form-textarea:focus {
+  border-color: var(--purple);
+  box-shadow: 0 0 0 3px rgba(124,58,237,.2);
+}
+.form-input::placeholder,
+.form-textarea::placeholder { color: var(--dim); }
+.form-input:disabled,
+.form-textarea:disabled { opacity: .45; cursor: not-allowed; }
+.form-textarea { resize: vertical; min-height: 100px; }
+
+.input-wrap {
+  position: relative;
+}
+.input-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  color: var(--purple);
+}
+
+/* Examples toggle */
+.examples-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: .75rem;
+  color: var(--purple);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  transition: color .2s;
+}
+.examples-toggle:hover { color: var(--purple-lt); }
+.examples-chevron { transition: transform .2s; }
+.examples-chevron.open { transform: rotate(180deg); }
+
+.examples-list {
+  display: none;
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.examples-list.open { display: block; }
+.example-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: var(--bg-input);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: .78rem;
+  font-family: 'Courier New', monospace;
+  padding: 10px 16px;
+  cursor: pointer;
+  transition: all .15s;
+}
+.example-item:last-child { border-bottom: none; }
+.example-item:hover { background: var(--bg-hover); color: #fff; }
+
+/* Format buttons */
+.format-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.fmt-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-hi);
+  border-radius: var(--radius);
+  cursor: pointer;
+  text-align: left;
+  transition: all .2s;
+  -webkit-appearance: none;
+  appearance: none;
+  color: var(--text);
+}
+.fmt-btn:hover:not(:disabled) { border-color: rgba(124,58,237,.5); background: var(--bg-hover); }
+.fmt-btn.active { border-color: var(--purple); background: rgba(124,58,237,.12); }
+.fmt-btn:disabled { opacity: .45; cursor: not-allowed; }
+.fmt-btn-name { font-weight: 600; font-size: .85rem; color: #fff; display: block; }
+.fmt-btn-ext  { font-size: .72rem; font-family: 'Courier New', monospace; color: var(--dim); display: block; }
+.fmt-selected-dot {
+  position: absolute; top: 8px; right: 8px;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--purple-lt);
+  box-shadow: 0 0 6px var(--purple-lt);
+  display: none;
+}
+.fmt-btn.active .fmt-selected-dot { display: block; }
+
+/* Range slider */
+.range-slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 4px;
+  background: var(--border);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  margin: 8px 0;
+  pointer-events: all;
+}
+.range-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--purple-lt);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(124,58,237,.5);
+}
+.range-slider::-moz-range-thumb {
+  width: 18px; height: 18px;
+  border-radius: 50%;
+  background: var(--purple-lt);
+  cursor: pointer;
+  border: none;
+}
+.range-labels {
+  display: flex;
+  justify-content: space-between;
+  font-size: .72rem;
+  font-family: 'Courier New', monospace;
+  color: var(--dim);
+  margin-top: 4px;
+}
+
+/* Hint text */
+.form-hint { font-size: .75rem; font-family: 'Courier New', monospace; color: var(--dim); margin-top: 6px; }
+
+/* Submit button */
+.btn-submit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 24px;
+  background: linear-gradient(135deg, #7c3aed, #5b21b6);
+  color: #fff;
+  font-size: .875rem;
+  font-weight: 700;
+  font-family: system-ui, sans-serif;
+  letter-spacing: .03em;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all .2s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.btn-submit:hover:not(:disabled) {
+  background: linear-gradient(135deg, #a855f7, #7c3aed);
+  box-shadow: 0 4px 20px rgba(124,58,237,.4);
+  transform: translateY(-1px);
+}
+.btn-submit:active { transform: scale(.98); }
+.btn-submit:disabled { opacity: .45; cursor: not-allowed; transform: none; }
+
+.btn-cancel {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 14px 24px;
+  background: transparent;
+  color: var(--red);
+  font-size: .875rem;
+  font-weight: 600;
+  border: 1px solid rgba(248,113,113,.4);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: all .2s;
+  -webkit-appearance: none;
+  appearance: none;
+}
+.btn-cancel.visible { display: flex; }
+.btn-cancel:hover { background: rgba(248,113,113,.08); border-color: var(--red); }
+
+/* =====================================================
+   PROGRESS PANE
+   ===================================================== */
+.pane-idle {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 32px 16px;
+}
+.idle-icon {
+  width: 72px; height: 72px;
+  border-radius: 18px;
+  border: 1px solid var(--border-hi);
+  background: rgba(124,58,237,.1);
+  display: flex; align-items: center; justify-content: center;
+  margin-bottom: 16px;
+}
+.idle-title { font-size: 1.2rem; font-weight: 700; color: #fff; margin-bottom: 8px; }
+.idle-desc { font-size: .85rem; color: var(--dim); max-width: 280px; line-height: 1.6; }
+.idle-desc strong { color: #a78bfa; }
+.idle-steps { display: grid; grid-template-columns: repeat(3,1fr); gap: 12px; margin-top: 24px; width: 100%; max-width: 260px; }
+.idle-step { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.idle-step-num {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  background: rgba(124,58,237,.2);
+  border: 1px solid rgba(124,58,237,.3);
+  color: #c084fc;
+  font-size: .8rem;
+  font-weight: 700;
+  font-family: 'Courier New', monospace;
+  display: flex; align-items: center; justify-content: center;
+}
+.idle-step-lbl { font-size: .7rem; font-family: 'Courier New', monospace; color: var(--dim); }
+
+.pane-progress { display: none; flex-direction: column; gap: 16px; animation: slideUp .35s ease; }
+.pane-progress.active { display: flex; }
+@keyframes slideUp { from{opacity:0;transform:translateY(16px)} to{opacity:1;transform:translateY(0)} }
+
+/* Progress header */
+.prog-header { display: flex; align-items: center; justify-content: space-between; }
+.prog-title { display: flex; align-items: center; gap: 10px; font-size: 1rem; font-weight: 700; color: #fff; }
+
+/* Status badge */
+.status-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px;
+  font-size: .7rem; font-family: 'Courier New', monospace;
+  font-weight: 700; text-transform: uppercase; letter-spacing: .06em;
+}
+.status-badge-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+.sb-pending    { background: rgba(251,191,36,.1);  border: 1px solid rgba(251,191,36,.3);  color: #fbbf24; }
+.sb-scraping   { background: rgba(96,165,250,.1);  border: 1px solid rgba(96,165,250,.3);  color: #60a5fa; }
+.sb-processing { background: rgba(124,58,237,.1);  border: 1px solid rgba(124,58,237,.3);  color: #a78bfa; }
+.sb-exporting  { background: rgba(0,212,255,.1);   border: 1px solid rgba(0,212,255,.3);   color: #00d4ff; }
+.sb-completed  { background: rgba(0,255,163,.1);   border: 1px solid rgba(0,255,163,.3);   color: #00ffa3; }
+.sb-failed     { background: rgba(248,113,113,.1); border: 1px solid rgba(248,113,113,.3); color: #f87171; }
+.sb-cancelled  { background: rgba(100,116,139,.1); border: 1px solid rgba(100,116,139,.3); color: #94a3b8; }
+.pulse-anim { animation: pulseDot 1.5s ease-in-out infinite; }
+
+/* Progress bar */
+.prog-track {
+  background: rgba(30,45,69,.8);
+  border-radius: 999px;
+  height: 8px;
+  overflow: hidden;
+}
+.prog-fill {
+  height: 100%;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #7c3aed, #00ffa3);
+  box-shadow: 0 0 8px rgba(124,58,237,.5);
+  transition: width .5s cubic-bezier(.4,0,.2,1);
+}
+.prog-pct { font-size: .72rem; font-family: 'Courier New', monospace; color: var(--dim); text-align: right; margin-top: 4px; }
+
+/* Message box */
+.msg-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 16px;
+}
+.msg-line { display: flex; align-items: center; gap: 8px; font-size: .85rem; font-family: 'Courier New', monospace; color: var(--muted); }
+.msg-dot  { width: 8px; height: 8px; border-radius: 50%; background: var(--purple-lt); flex-shrink: 0; animation: pulseDot 1.5s ease-in-out infinite; }
+.msg-step { font-size: .75rem; font-family: 'Courier New', monospace; color: var(--dim); margin-top: 4px; display: none; }
+.msg-step.visible { display: block; }
+
+/* Terminal log */
+.log-box {
+  background: #050810;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  height: 180px;
+  overflow-y: auto;
+  position: relative;
+}
+.log-scan {
+  position: absolute; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(0,255,163,.5), transparent);
+  pointer-events: none;
+  animation: scanLine 3s linear infinite;
+}
+@keyframes scanLine { 0%{top:-2px} 100%{top:100%} }
+.log-empty { font-size: .78rem; font-family: 'Courier New', monospace; color: var(--dim); }
+.log-entry { font-size: .75rem; font-family: 'Courier New', monospace; line-height: 1.7; }
+.log-arrow { color: var(--purple-lt); user-select: none; }
+.log-text  { color: #b0c4de; }
+.log-cursor { font-size: .75rem; font-family: 'Courier New', monospace; margin-top: 4px; display: none; }
+.log-cursor.visible { display: block; }
+.blink { color: var(--green); animation: blinkCursor 1s step-end infinite; }
+@keyframes blinkCursor { 0%,100%{opacity:1} 50%{opacity:0} }
+
+/* Success state */
+.pane-success {
+  border: 1px solid rgba(0,255,163,.3);
+  background: rgba(0,255,163,.05);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: none;
+  flex-direction: column;
+  gap: 14px;
+  animation: slideUp .3s ease;
+}
+.pane-success.visible { display: flex; }
+.success-head { display: flex; align-items: center; gap: 12px; }
+.success-title { font-weight: 700; color: #fff; font-size: .95rem; }
+.success-rows { font-size: .8rem; font-family: 'Courier New', monospace; color: var(--green); margin-top: 2px; }
+.success-actions { display: flex; gap: 10px; }
+.btn-download {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 12px;
+  background: linear-gradient(135deg, #00ffa3, #00d4ff);
+  color: #000; font-weight: 700; font-size: .85rem;
+  border: none; border-radius: var(--radius);
+  cursor: pointer; transition: opacity .2s;
+}
+.btn-download:hover { opacity: .88; }
+.btn-reset {
+  padding: 12px 16px;
+  background: transparent;
+  border: 1px solid var(--border-hi);
+  color: var(--muted); border-radius: var(--radius);
+  cursor: pointer; transition: all .2s;
+}
+.btn-reset:hover { border-color: var(--muted); color: #fff; }
+
+/* Error state */
+.pane-error {
+  border: 1px solid rgba(248,113,113,.3);
+  background: rgba(248,113,113,.05);
+  border-radius: var(--radius);
+  padding: 18px;
+  display: none;
+  flex-direction: column;
+  gap: 12px;
+  animation: slideUp .3s ease;
+}
+.pane-error.visible { display: flex; }
+.error-head { display: flex; align-items: center; gap: 10px; }
+.error-title { font-weight: 700; color: #fca5a5; }
+.error-msg { font-size: .78rem; font-family: 'Courier New', monospace; color: rgba(248,113,113,.8); background: rgba(0,0,0,.3); border-radius: 8px; padding: 10px; }
+.btn-retry {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%; padding: 10px;
+  background: transparent; border: 1px solid rgba(248,113,113,.3);
+  color: var(--red); border-radius: var(--radius);
+  cursor: pointer; font-size: .85rem; font-weight: 600;
+  transition: all .2s;
+}
+.btn-retry:hover { background: rgba(248,113,113,.08); }
+
+/* =====================================================
+   ARCHITECTURE
+   ===================================================== */
+.arch-section { max-width: 1100px; margin: 0 auto; padding: 0 24px 64px; }
+.arch-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+}
+.arch-label {
+  font-size: .7rem; font-family: 'Courier New', monospace;
+  text-transform: uppercase; letter-spacing: .2em;
+  color: rgba(124,58,237,.6); margin-bottom: 20px;
+}
+.arch-steps {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.arch-step {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 4px; padding: 10px 12px; border-radius: 10px;
+  text-align: center; min-width: 76px;
+}
+.arch-step-icon { font-size: 1.2rem; }
+.arch-step-name { font-size: .72rem; font-weight: 700; color: #fff; line-height: 1.2; }
+.arch-step-sub  { font-size: .62rem; font-family: 'Courier New', monospace; line-height: 1.2; }
+.arch-arrow { color: #2d4060; flex-shrink: 0; }
+
+/* =====================================================
+   FOOTER
+   ===================================================== */
+.footer {
+  border-top: 1px solid var(--border);
+  padding: 48px 24px;
+}
+.footer-inner {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 40px;
+  margin-bottom: 32px;
+}
+.footer-brand { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+.footer-brand-name { font-weight: 700; font-size: .9rem; color: #fff; }
+.footer-desc { font-size: .82rem; color: var(--muted); line-height: 1.6; }
+.footer-col-title { font-size: .7rem; font-family: 'Courier New', monospace; text-transform: uppercase; letter-spacing: .2em; color: var(--dim); margin-bottom: 14px; }
+.footer-links { display: flex; flex-direction: column; gap: 8px; }
+.footer-link { color: var(--muted); text-decoration: none; font-size: .85rem; transition: color .2s; }
+.footer-link:hover { color: #fff; }
+.stack-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+.stack-tag {
+  font-size: .72rem; font-family: 'Courier New', monospace;
+  padding: 3px 8px; border-radius: 6px;
+  background: rgba(255,255,255,.03);
+  border: 1px solid rgba(255,255,255,.07);
+  color: var(--muted);
+}
+.footer-bottom {
+  max-width: 1100px; margin: 0 auto;
+  border-top: 1px solid var(--border);
+  padding-top: 20px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-wrap: wrap; gap: 12px;
+  font-size: .78rem; font-family: 'Courier New', monospace; color: var(--dim);
+}
+.status-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); display: inline-block; margin-right: 6px; animation: pulseDot 2s ease-in-out infinite; }
+
+/* =====================================================
+   REVEAL ANIMATION
+   ===================================================== */
+.reveal { opacity: 0; transform: translateY(20px); transition: opacity .6s ease, transform .6s ease; }
+.reveal.in { opacity: 1; transform: translateY(0); }
+
+/* =====================================================
+   GRID BACKGROUND
+   ===================================================== */
+.grid-bg {
+  background-image:
+    linear-gradient(rgba(30,45,69,.35) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(30,45,69,.35) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* =====================================================
+   RESPONSIVE
+   ===================================================== */
+@media (max-width: 900px) {
+  .scraper-grid { grid-template-columns: 1fr; }
+  .pills { grid-template-columns: repeat(2,1fr); }
+  .footer-inner { grid-template-columns: 1fr; gap: 24px; }
+  .nav-links { display: none; }
+  .nav-ham { display: block; }
+}
+@media (max-width: 480px) {
+  .pills { grid-template-columns: 1fr; }
+  .format-grid { grid-template-columns: 1fr; }
+  .hero-h1 { font-size: 2.4rem; }
+}
+</style>
+</head>
+<body class="grid-bg">
+
+<!-- Particle canvas — pointer-events:none, purely decorative -->
+<canvas id="bg-canvas"></canvas>
+
+<div class="site-wrap">
+  <!-- ─── NAV ─── -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a class="nav-brand" href="#">
+        <div class="nav-logo">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+        </div>
+        <span class="nav-title">AIScraper</span>
+      </a>
+      <div class="nav-links">
+        <a class="nav-link" href="#scraper">Scraper</a>
+        <a class="nav-link" href="#architecture">Architecture</a>
+        <a class="nav-btn" href="https://github.com" target="_blank" rel="noopener">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub
+        </a>
+      </div>
+      <button class="nav-ham" id="ham-btn" aria-label="Menu">
+        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+      </button>
+    </div>
+  </nav>
+  <div class="mobile-menu" id="mobile-menu">
+    <a href="#scraper" onclick="closeMobileMenu()">Scraper</a>
+    <a href="#architecture" onclick="closeMobileMenu()">Architecture</a>
+    <a href="https://github.com" target="_blank" rel="noopener" style="color:#a78bfa">GitHub &rarr;</a>
+  </div>
+
+  <!-- ─── HERO ─── -->
+  <section class="hero" id="home">
+    <div class="blob" style="width:360px;height:360px;top:-120px;left:-80px;background:radial-gradient(circle,rgba(124,58,237,.25) 0%,transparent 70%);opacity:.7"></div>
+    <div class="blob blob-2" style="width:420px;height:420px;bottom:-160px;right:-100px;background:radial-gradient(circle,rgba(0,255,163,.18) 0%,transparent 70%);opacity:.7"></div>
+    <div class="reveal in" style="position:relative;z-index:1">
+      <div class="hero-badge">
+        <span class="badge-dot"></span>
+        Open Source &middot; Local AI &middot; No API Keys
+      </div>
+      <h1 class="hero-h1">AI<span class="grad-text"> Scraper</span></h1>
+      <p class="hero-sub">
+        Extract structured datasets from any website using local AI.<br>
+        <span>Powered by TinyLlama, FAISS &amp; Playwright.</span>
+      </p>
+      <div class="hero-links">
+        <a class="hero-lnk" href="https://github.com" target="_blank" rel="noopener">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub
+        </a>
+        <span style="color:#2d3748">&middot;</span>
+        <a class="hero-lnk" href="#scraper">Try the Demo &darr;</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── PILLS ─── -->
+  <div class="pills">
+    <div class="pill reveal in">
+      <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+      <span class="pill-name">Local AI</span>
+      <span class="pill-desc">TinyLlama / Phi running on your hardware</span>
+    </div>
+    <div class="pill reveal in">
+      <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="#00ffa3" stroke-width="1.8"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      <span class="pill-name">No API Keys</span>
+      <span class="pill-desc">100% free, open-source, private</span>
+    </div>
+    <div class="pill reveal in">
+      <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="#00d4ff" stroke-width="1.8"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><circle cx="17" cy="17" r="3"/></svg>
+      <span class="pill-name">FAISS + ST</span>
+      <span class="pill-desc">Semantic vector search extraction</span>
+    </div>
+    <div class="pill reveal in">
+      <svg class="pill-icon" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+      <span class="pill-name">Any Format</span>
+      <span class="pill-desc">Export as Excel or Word documents</span>
+    </div>
+  </div>
+
+  <!-- ─── SCRAPER UI ─── -->
+  <section id="scraper" class="scraper-section">
+    <div class="scraper-header reveal in">
+      <span class="section-label">Interactive Demo</span>
+      <h2 class="section-h2">Try the <span class="grad-text">Scraper</span></h2>
+      <span class="demo-note">Frontend demo &mdash; <strong>all inputs fully functional</strong>, simulated extraction pipeline.</span>
+    </div>
+
+    <div class="scraper-grid">
+
+      <!-- ──── LEFT: FORM ──── -->
+      <div class="card-anim-border">
+        <div class="card-inner">
+          <div class="win-chrome">
+            <div class="win-dot" style="background:#ff5f57"></div>
+            <div class="win-dot" style="background:#febc2e"></div>
+            <div class="win-dot" style="background:#28c840"></div>
+            <span class="win-label">scraper.config</span>
+          </div>
+
+          <!-- URL -->
+          <div class="form-group">
+            <label class="form-label" for="url-input">Target URL</label>
+            <div class="input-wrap">
+              <svg class="input-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/></svg>
+              <input
+                type="url"
+                id="url-input"
+                class="form-input"
+                placeholder="https://example.com"
+                autocomplete="off"
+                spellcheck="false"
+              >
+            </div>
+          </div>
+
+          <!-- Instructions -->
+          <div class="form-group">
+            <div class="form-label-row">
+              <label class="form-label" for="instr-input" style="margin-bottom:0">Extraction Instructions</label>
+              <button type="button" class="examples-toggle" id="examples-toggle-btn">
+                Examples
+                <svg class="examples-chevron" id="examples-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 4l4 4 4-4"/></svg>
+              </button>
+            </div>
+            <div class="examples-list" id="examples-list">
+              <button type="button" class="example-item" data-val="Extract all product names, prices, and ratings">&rarr; Extract all product names, prices, and ratings</button>
+              <button type="button" class="example-item" data-val="Get all article titles, authors, dates, and summaries">&rarr; Get all article titles, authors, dates, and summaries</button>
+              <button type="button" class="example-item" data-val="Collect all job listings with title, company, location, and salary">&rarr; Collect all job listings with title, company, location, and salary</button>
+              <button type="button" class="example-item" data-val="Extract all team member names, roles, and bios">&rarr; Extract all team member names, roles, and bios</button>
+              <button type="button" class="example-item" data-val="Get all research papers with title, abstract, and authors">&rarr; Get all research papers with title, abstract, and authors</button>
+            </div>
+            <textarea
+              id="instr-input"
+              class="form-textarea"
+              rows="4"
+              placeholder="Describe what data to extract — e.g. 'Extract all product names, prices and descriptions from this e-commerce page'"
+              spellcheck="false"
+            ></textarea>
+            <p class="form-hint">Be specific. The AI uses your instructions to extract and structure the data.</p>
+          </div>
+
+          <!-- Output Format -->
+          <div class="form-group">
+            <label class="form-label">Output Format</label>
+            <div class="format-grid">
+              <button type="button" class="fmt-btn active" id="fmt-excel" data-fmt="excel">
+                <div class="fmt-selected-dot"></div>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#00ffa3" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13l2 4 4-6"/></svg>
+                <div>
+                  <span class="fmt-btn-name">Excel</span>
+                  <span class="fmt-btn-ext">.xlsx spreadsheet</span>
+                </div>
+              </button>
+              <button type="button" class="fmt-btn" id="fmt-word" data-fmt="word">
+                <div class="fmt-selected-dot"></div>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.8"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+                <div>
+                  <span class="fmt-btn-name">Word</span>
+                  <span class="fmt-btn-ext">.docx document</span>
+                </div>
+              </button>
+            </div>
+          </div>
+
+          <!-- Pages Slider -->
+          <div class="form-group">
+            <label class="form-label">Max Pages: <span id="pages-val" style="color:#00ffa3">1</span></label>
+            <input type="range" class="range-slider" id="pages-slider" min="1" max="10" step="1" value="1">
+            <div class="range-labels"><span>1 page</span><span>10 pages</span></div>
+          </div>
+
+          <!-- Buttons -->
+          <div style="margin-top:8px">
+            <button type="button" class="btn-submit" id="submit-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Start Extraction
+            </button>
+            <button type="button" class="btn-cancel" id="cancel-btn">
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              Cancel Job
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ──── RIGHT: PROGRESS ──── -->
+      <div class="card" id="right-card">
+
+        <!-- Idle pane -->
+        <div class="pane-idle" id="pane-idle">
+          <div class="idle-icon">
+            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="1.5"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5" fill="#a855f7"/></svg>
+          </div>
+          <p class="idle-title">Ready to Extract</p>
+          <p class="idle-desc">Configure your scraping job on the left and click <strong>"Start Extraction"</strong>. Live progress will appear here.</p>
+          <div class="idle-steps">
+            <div class="idle-step"><div class="idle-step-num">1</div><span class="idle-step-lbl">Scrape</span></div>
+            <div class="idle-step"><div class="idle-step-num">2</div><span class="idle-step-lbl">Embed</span></div>
+            <div class="idle-step"><div class="idle-step-num">3</div><span class="idle-step-lbl">Export</span></div>
+          </div>
+        </div>
+
+        <!-- Progress pane (hidden until job starts) -->
+        <div class="pane-progress" id="pane-progress">
+          <div class="prog-header">
+            <div class="prog-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+              Extraction Progress
+            </div>
+            <div class="status-badge sb-pending" id="status-badge">
+              <span class="status-badge-dot pulse-anim"></span>
+              <span id="badge-txt">Pending</span>
+            </div>
+          </div>
+
+          <div>
+            <div class="prog-track"><div class="prog-fill" id="prog-fill" style="width:0%"></div></div>
+            <div class="prog-pct" id="prog-pct">0%</div>
+          </div>
+
+          <div class="msg-box">
+            <div class="msg-line">
+              <span class="msg-dot" id="msg-dot"></span>
+              <span id="msg-text">Initializing&hellip;</span>
+            </div>
+            <div class="msg-step" id="msg-step"></div>
+          </div>
+
+          <div class="log-box" id="log-box">
+            <div class="log-scan"></div>
+            <div id="log-empty" class="log-empty">$ waiting for output&hellip;</div>
+            <div id="log-lines"></div>
+            <div class="log-cursor" id="log-cursor">
+              <span class="log-arrow">&rsaquo; </span><span class="blink">&#9608;</span>
+            </div>
+          </div>
+
+          <div class="pane-success" id="pane-success">
+            <div class="success-head">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#00ffa3" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+              <div>
+                <div class="success-title">Extraction Complete!</div>
+                <div class="success-rows" id="success-rows"></div>
+              </div>
+            </div>
+            <div class="success-actions">
+              <button type="button" class="btn-download" id="btn-download">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                Download File
+              </button>
+              <button type="button" class="btn-reset" id="btn-reset-ok" title="New extraction">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="pane-error" id="pane-error">
+            <div class="error-head">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+              <span class="error-title">Extraction Failed</span>
+            </div>
+            <div class="error-msg" id="error-txt"></div>
+            <button type="button" class="btn-retry" id="btn-retry">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+              Try Again
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ─── ARCHITECTURE ─── -->
+  <section id="architecture" class="arch-section">
+    <div class="arch-card reveal in">
+      <p class="arch-label">Pipeline Architecture</p>
+      <div class="arch-steps" id="arch-steps"></div>
+    </div>
+  </section>
+
+  <!-- ─── FOOTER ─── -->
+  <footer class="footer">
+    <div class="footer-inner">
+      <div>
+        <div class="footer-brand">
+          <div class="nav-logo"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5M2 12l10 5 10-5"/></svg></div>
+          <span class="footer-brand-name">AIScraper</span>
+        </div>
+        <p class="footer-desc">Fully automated web scraping platform powered by local AI. Extract, process, and deploy data at scale.</p>
+      </div>
+      <div>
+        <p class="footer-col-title">Project</p>
+        <div class="footer-links">
+          <a class="footer-link" href="https://github.com">Repository</a>
+          <a class="footer-link" href="https://github.com">Documentation</a>
+          <a class="footer-link" href="https://github.com">Releases</a>
+          <a class="footer-link" href="https://github.com">Contributing</a>
+        </div>
+      </div>
+      <div>
+        <p class="footer-col-title">Stack</p>
+        <div class="stack-tags" id="stack-tags"></div>
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <span>&copy; 2024 AI Web Scraper &mdash; MIT License</span>
+      <span><span class="status-dot"></span>All systems operational</span>
+    </div>
+  </footer>
+</div><!-- /site-wrap -->
+
+<script>
+(function() {
+'use strict';
+
+/* ======================================================
+   PARTICLE CANVAS (decorative — never touches events)
+   ====================================================== */
+var CV = document.getElementById('bg-canvas');
+var CX = CV.getContext('2d');
+var W, H, pts = [];
+
+function resizeCV() { W = CV.width = window.innerWidth; H = CV.height = window.innerHeight; }
+function makePts() {
+  pts = [];
+  var n = Math.min(Math.floor(W * H / 15000), 60);
+  for (var i = 0; i < n; i++) {
+    pts.push({
+      x: Math.random()*W, y: Math.random()*H,
+      r: Math.random()*1.3+0.3,
+      vx:(Math.random()-.5)*.15, vy:(Math.random()-.5)*.15,
+      op:Math.random()*.3+.07,
+      c:['#7c3aed','#00ffa3','#00d4ff'][0|Math.random()*3]
+    });
+  }
+}
+function drawCV() {
+  CX.clearRect(0,0,W,H);
+  for(var i=0;i<pts.length;i++){
+    var p=pts[i];
+    p.x+=p.vx; p.y+=p.vy;
+    if(p.x<0)p.x=W; if(p.x>W)p.x=0;
+    if(p.y<0)p.y=H; if(p.y>H)p.y=0;
+    CX.beginPath(); CX.arc(p.x,p.y,p.r,0,6.28);
+    CX.fillStyle=p.c; CX.globalAlpha=p.op; CX.fill();
+    for(var j=i+1;j<pts.length;j++){
+      var q=pts[j],dx=p.x-q.x,dy=p.y-q.y,d=Math.sqrt(dx*dx+dy*dy);
+      if(d<90){CX.beginPath();CX.moveTo(p.x,p.y);CX.lineTo(q.x,q.y);
+        CX.strokeStyle='#7c3aed';CX.globalAlpha=(1-d/90)*.04;CX.lineWidth=.5;CX.stroke();}
+    }
+  }
+  CX.globalAlpha=1;
+  requestAnimationFrame(drawCV);
+}
+resizeCV(); makePts(); drawCV();
+window.addEventListener('resize', function(){ resizeCV(); makePts(); });
+
+/* ======================================================
+   REVEAL
+   ====================================================== */
+document.querySelectorAll('.reveal:not(.in)').forEach(function(el){
+  new IntersectionObserver(function(entries,obs){
+    entries.forEach(function(e){
+      if(e.isIntersecting){ e.target.classList.add('in'); obs.unobserve(e.target); }
+    });
+  },{threshold:.08}).observe(el);
+});
+
+/* ======================================================
+   NAV
+   ====================================================== */
+function closeMobileMenu(){ document.getElementById('mobile-menu').classList.remove('open'); }
+window.closeMobileMenu = closeMobileMenu;
+document.getElementById('ham-btn').addEventListener('click', function(){
+  document.getElementById('mobile-menu').classList.toggle('open');
+});
+
+/* ======================================================
+   STACK TAGS
+   ====================================================== */
+var TAGS = ['FastAPI','Next.js','LangChain','Playwright','ChromaDB','Redis','Docker'];
+var tagEl = document.getElementById('stack-tags');
+TAGS.forEach(function(t){
+  var s = document.createElement('span');
+  s.className = 'stack-tag';
+  s.textContent = t;
+  tagEl.appendChild(s);
+});
+
+/* ======================================================
+   ARCHITECTURE STEPS
+   ====================================================== */
+var STEPS = [
+  {e:'🌐',n:'URL Input',     s:'Next.js UI',           c:'#7c3aed'},
+  {e:'🎭',n:'Playwright',   s:'JS Rendering',         c:'#3b82f6'},
+  {e:'🧹',n:'BS4',          s:'HTML Parsing',         c:'#06b6d4'},
+  {e:'🔢',n:'Embeddings',   s:'sentence-transformers',c:'#8b5cf6'},
+  {e:'🗄️',n:'FAISS',        s:'Vector Search',        c:'#a855f7'},
+  {e:'🤖',n:'TinyLlama',   s:'AI Extraction',        c:'#ec4899'},
+  {e:'📊',n:'Export',       s:'Excel / Word',         c:'#00ffa3'},
+];
+var archEl = document.getElementById('arch-steps');
+STEPS.forEach(function(st,i){
+  var d = document.createElement('div');
+  d.innerHTML =
+    '<div class="arch-step" style="border:1px solid '+st.c+'30;background:'+st.c+'10">'
+      +'<span class="arch-step-icon">'+st.e+'</span>'
+      +'<span class="arch-step-name">'+st.n+'</span>'
+      +'<span class="arch-step-sub" style="color:'+st.c+'">'+st.s+'</span>'
+    +'</div>'
+    +(i<STEPS.length-1?'<svg class="arch-arrow" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>':'');
+  archEl.appendChild(d);
+});
+
+/* ======================================================
+   FORM — EXAMPLES DROPDOWN
+   ====================================================== */
+var exToggle   = document.getElementById('examples-toggle-btn');
+var exList     = document.getElementById('examples-list');
+var exChevron  = document.getElementById('examples-chevron');
+var instrEl    = document.getElementById('instr-input');
+
+exToggle.addEventListener('click', function(){
+  var open = exList.classList.toggle('open');
+  exChevron.classList.toggle('open', open);
+});
+
+document.querySelectorAll('.example-item').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    instrEl.value = btn.getAttribute('data-val');
+    exList.classList.remove('open');
+    exChevron.classList.remove('open');
+    instrEl.focus();
+  });
+});
+
+/* ======================================================
+   FORM — FORMAT BUTTONS
+   ====================================================== */
+var selFmt = 'excel';
+document.querySelectorAll('.fmt-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    if(btn.disabled) return;
+    selFmt = btn.getAttribute('data-fmt');
+    document.querySelectorAll('.fmt-btn').forEach(function(b){ b.classList.remove('active'); });
+    btn.classList.add('active');
+  });
+});
+
+/* ======================================================
+   FORM — SLIDER
+   ====================================================== */
+var sliderEl = document.getElementById('pages-slider');
+var pagesVal = document.getElementById('pages-val');
+sliderEl.addEventListener('input', function(){ pagesVal.textContent = sliderEl.value; });
+
+/* ======================================================
+   UI HELPERS
+   ====================================================== */
+var urlEl      = document.getElementById('url-input');
+var submitBtn  = document.getElementById('submit-btn');
+var cancelBtn  = document.getElementById('cancel-btn');
+var progFill   = document.getElementById('prog-fill');
+var progPct    = document.getElementById('prog-pct');
+var msgText    = document.getElementById('msg-text');
+var msgStep    = document.getElementById('msg-step');
+var msgDot     = document.getElementById('msg-dot');
+var statusBdg  = document.getElementById('status-badge');
+var badgeTxt   = document.getElementById('badge-txt');
+var logEmpty   = document.getElementById('log-empty');
+var logLines   = document.getElementById('log-lines');
+var logCursor  = document.getElementById('log-cursor');
+var logBox     = document.getElementById('log-box');
+var paneIdle   = document.getElementById('pane-idle');
+var paneProg   = document.getElementById('pane-progress');
+var paneSucc   = document.getElementById('pane-success');
+var paneErr    = document.getElementById('pane-error');
+var successRows= document.getElementById('success-rows');
+var errorTxt   = document.getElementById('error-txt');
+var fmtExcel   = document.getElementById('fmt-excel');
+var fmtWord    = document.getElementById('fmt-word');
+
+var BADGE_MAP = {
+  pending:    {cls:'sb-pending',    txt:'Pending',    pulse:true},
+  scraping:   {cls:'sb-scraping',   txt:'Scraping',   pulse:true},
+  processing: {cls:'sb-processing', txt:'Processing', pulse:true},
+  exporting:  {cls:'sb-exporting',  txt:'Exporting',  pulse:true},
+  completed:  {cls:'sb-completed',  txt:'Completed',  pulse:false},
+  failed:     {cls:'sb-failed',     txt:'Failed',     pulse:false},
+  cancelled:  {cls:'sb-cancelled',  txt:'Cancelled',  pulse:false},
+};
+
+function setBadge(status) {
+  var m = BADGE_MAP[status] || {cls:'sb-pending', txt:status, pulse:true};
+  statusBdg.className = 'status-badge ' + m.cls;
+  var dotHtml = '<span class="status-badge-dot' + (m.pulse?' pulse-anim':'') + '"></span>';
+  statusBdg.innerHTML = dotHtml + '<span>' + m.txt + '</span>';
+}
+
+function setProgress(pct, msg, step) {
+  progFill.style.width = pct + '%';
+  progPct.textContent  = pct + '%';
+  msgText.textContent  = msg;
+  if (step) { msgStep.textContent = 'step: ' + step; msgStep.classList.add('visible'); }
+  else       { msgStep.classList.remove('visible'); }
+}
+
+function addLog(txt) {
+  logEmpty.style.display = 'none';
+  var d = document.createElement('div');
+  d.className = 'log-entry';
+  d.innerHTML = '<span class="log-arrow">&rsaquo; </span><span class="log-text">' + txt + '</span>';
+  logLines.appendChild(d);
+  logBox.scrollTop = logBox.scrollHeight;
+}
+
+function setFormDisabled(dis) {
+  urlEl.disabled    = dis;
+  instrEl.disabled  = dis;
+  sliderEl.disabled = dis;
+  fmtExcel.disabled = dis;
+  fmtWord.disabled  = dis;
+}
+
+function showProgressPane() {
+  paneIdle.style.display = 'none';
+  paneProg.classList.add('active');
+  paneSucc.classList.remove('visible');
+  paneErr.classList.remove('visible');
+  logLines.innerHTML = '';
+  logEmpty.style.display = '';
+  logCursor.classList.add('visible');
+}
+
+function resetAll() {
+  clearTimeout(simTmr);
+  isRunning = false;
+  setFormDisabled(false);
+  submitBtn.disabled = false;
+  submitBtn.style.display = '';
+  cancelBtn.classList.remove('visible');
+  paneIdle.style.display = '';
+  paneProg.classList.remove('active');
+  paneSucc.classList.remove('visible');
+  paneErr.classList.remove('visible');
+  progFill.style.width = '0%';
+  progPct.textContent = '0%';
+}
+
+/* ======================================================
+   SIMULATION ENGINE
+   Replaces all localhost:8000 API calls — runs 100%
+   client-side so GitHub Pages works with no backend.
+   ====================================================== */
+var isRunning = false;
+var simTmr    = null;
+
+function runSim(url, instr, fmt, pages) {
+  var ext  = fmt === 'excel' ? 'xlsx' : 'docx';
+  var rows = Math.floor(pages * (Math.random()*55 + 35));
+  var idx  = 0;
+
+  var stages = [
+    {st:'pending',    pct:5,  msg:'Queuing job…',                                  step:'init',
+     log:'[PENDING] Job queued — ID: JOB_' + Math.floor(Math.random()*9000+1000)},
+    {st:'scraping',   pct:14, msg:'Launching headless browser…',                   step:'browser',
+     log:'[SCRAPING] Playwright browser spawned (Chromium)'},
+    {st:'scraping',   pct:26, msg:'Navigating to ' + url.slice(0,40) + (url.length>40?'…':''), step:'navigate',
+     log:'[SCRAPING] GET ' + url + ' → HTTP 200'},
+    {st:'scraping',   pct:38, msg:'Extracting raw HTML content…',                  step:'html',
+     log:'[SCRAPING] Fetched ' + (Math.floor(Math.random()*80+20)) + 'KB HTML across ' + pages + ' page(s)'},
+    {st:'processing', pct:50, msg:'Running BeautifulSoup parser…',                 step:'parse',
+     log:'[PROCESSING] Parsed ' + (Math.floor(Math.random()*200+80)) + ' DOM nodes'},
+    {st:'processing', pct:62, msg:'Generating sentence embeddings…',               step:'embed',
+     log:'[PROCESSING] sentence-transformers: encoded ' + rows + ' text chunks'},
+    {st:'processing', pct:73, msg:'Building FAISS vector index…',                  step:'index',
+     log:'[PROCESSING] FAISS IndexFlatL2 built — semantic search ready'},
+    {st:'processing', pct:83, msg:'TinyLlama: ' + instr.slice(0,35) + (instr.length>35?'…':''), step:'llm',
+     log:'[PROCESSING] LLM extraction complete — ' + rows + ' candidate rows'},
+    {st:'exporting',  pct:91, msg:'Writing ' + ext.toUpperCase() + ' file…',      step:'export',
+     log:'[EXPORTING] Writing ' + rows + ' rows → dataset.' + ext},
+    {st:'exporting',  pct:97, msg:'Finalising export…',                            step:'finalise',
+     log:'[EXPORTING] File size: ' + (rows * 0.82).toFixed(1) + ' KB'},
+    {st:'completed',  pct:100,msg:'Done! ' + rows + ' rows extracted.',            step:'',
+     log:'[COMPLETED] dataset.' + ext + ' ready — ' + rows.toLocaleString() + ' rows'},
+  ];
+
+  function tick() {
+    if (!isRunning || idx >= stages.length) return;
+    var s = stages[idx++];
+    setBadge(s.st);
+    setProgress(s.pct, s.msg, s.step);
+    addLog(s.log);
+
+    if (s.st === 'completed') {
+      logCursor.classList.remove('visible');
+      isRunning = false;
+      setFormDisabled(false);
+      submitBtn.style.display   = '';
+      submitBtn.disabled        = false;
+      cancelBtn.classList.remove('visible');
+      successRows.textContent   = rows.toLocaleString() + ' rows extracted';
+      paneSucc.classList.add('visible');
+      return;
+    }
+    simTmr = setTimeout(tick, idx === 1 ? 300 : Math.floor(Math.random()*700 + 550));
+  }
+  tick();
+}
+
+/* ======================================================
+   SUBMIT
+   ====================================================== */
+submitBtn.addEventListener('click', function() {
+  var url  = urlEl.value.trim();
+  var instr = instrEl.value.trim();
+
+  /* Validation flash helper */
+  function flash(el) {
+    el.style.borderColor = '#f87171';
+    el.style.boxShadow   = '0 0 0 3px rgba(248,113,113,.2)';
+    el.focus();
+    setTimeout(function(){
+      el.style.borderColor = '';
+      el.style.boxShadow   = '';
+    }, 2000);
+  }
+
+  if (!url) { flash(urlEl); return; }
+  if (!instr) { flash(instrEl); return; }
+
+  isRunning = true;
+  setFormDisabled(true);
+  submitBtn.style.display = 'none';
+  cancelBtn.classList.add('visible');
+  showProgressPane();
+  setBadge('pending');
+  setProgress(0, 'Starting…', '');
+  runSim(url, instr, selFmt, parseInt(sliderEl.value, 10));
+});
+
+/* ======================================================
+   CANCEL
+   ====================================================== */
+cancelBtn.addEventListener('click', function() {
+  clearTimeout(simTmr);
+  isRunning = false;
+  logCursor.classList.remove('visible');
+  addLog('[CANCELLED] Job cancelled by user');
+  setBadge('cancelled');
+  msgDot.style.display = 'none';
+  setFormDisabled(false);
+  submitBtn.style.display = '';
+  submitBtn.disabled = false;
+  cancelBtn.classList.remove('visible');
+});
+
+/* ======================================================
+   RESET / RETRY
+   ====================================================== */
+document.getElementById('btn-reset-ok').addEventListener('click', resetAll);
+document.getElementById('btn-retry').addEventListener('click', resetAll);
+
+/* ======================================================
+   DOWNLOAD (demo notice)
+   ====================================================== */
+document.getElementById('btn-download').addEventListener('click', function() {
+  var ext = selFmt === 'excel' ? 'xlsx' : 'docx';
+  alert(
+    'Demo Mode\n\n' +
+    'In a live deployment, "dataset.' + ext + '" would download here.\n\n' +
+    'Deploy the FastAPI backend and point NEXT_PUBLIC_API_URL to enable real downloads.'
+  );
+});
+
+/* ======================================================
+   KEYBOARD SHORTCUT: Enter in URL → focus instructions
+   ====================================================== */
+urlEl.addEventListener('keydown', function(e) {
+  if (e.key === 'Enter') { e.preventDefault(); instrEl.focus(); }
+});
+
+})();
+</script>
+</body>
+</html>
