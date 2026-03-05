@@ -1,0 +1,813 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AI Web Scraper – Fully Automated Web Scraping Platform." />
+  <title>AI Web Scraper – Fully Automated Web Scraping Platform</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700&family=Syne:wght@400;600;700;800&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: { extend: { fontFamily: {
+        display: ['Syne','sans-serif'],
+        body:    ['Inter','sans-serif'],
+        mono:    ['Space Mono','monospace']
+      }}}
+    }
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; }
+    :root {
+      --bg-base:    #0a0a14;
+      --bg-card:    rgba(22,22,40,0.85);
+      --bg-overlay: rgba(15,15,30,0.9);
+      --border-dim: rgba(42,42,74,0.8);
+      --purple:     #7c3aed;
+      --green:      #00ffa3;
+      --cyan:       #00d4ff;
+      --text-base:  #e8e8f0;
+      --text-muted: #9191b0;
+      --text-dim:   #5a5a7a;
+    }
+    html { scroll-behavior: smooth; }
+    /*
+      BUG FIX #1: cursor was set to 'none' in the original — this made it
+      impossible to tell where you were clicking and broke all input interaction.
+      Now set to auto (default).
+    */
+    body {
+      background-color: var(--bg-base);
+      color: var(--text-base);
+      font-family: 'Inter', sans-serif;
+      min-height: 100vh;
+      overflow-x: hidden;
+      cursor: auto;
+    }
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0f0f1e; }
+    ::-webkit-scrollbar-thumb { background: #3a3a6a; border-radius: 3px; }
+    ::selection { background: rgba(124,58,237,0.4); color: #fff; }
+    .bg-grid {
+      background-image: linear-gradient(rgba(42,42,74,0.3) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(42,42,74,0.3) 1px, transparent 1px);
+      background-size: 40px 40px;
+    }
+    .card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-dim);
+      backdrop-filter: blur(12px);
+      border-radius: 16px;
+    }
+    /*
+      BUG FIX #2: Input fields need explicit z-index and pointer-events:auto
+      to ensure decorative overlays (canvas, blobs, noise) never intercept clicks.
+    */
+    .input-field {
+      background: var(--bg-overlay);
+      border: 1px solid var(--border-dim);
+      color: var(--text-base);
+      transition: all 0.2s ease;
+      pointer-events: auto;
+      position: relative;
+      z-index: 10;
+    }
+    .input-field:focus {
+      outline: none;
+      border-color: var(--purple);
+      box-shadow: 0 0 0 3px rgba(124,58,237,0.2);
+    }
+    .input-field::placeholder { color: var(--text-dim); }
+    .input-field:disabled { opacity: 0.5; cursor: not-allowed; }
+    @keyframes borderRotate {
+      0%   { background-position: 0% 50%; }
+      50%  { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .gradient-border {
+      background: linear-gradient(135deg, #7c3aed, #00ffa3, #00d4ff, #7c3aed);
+      background-size: 300% 300%;
+      animation: borderRotate 4s ease infinite;
+      padding: 1px;
+      border-radius: 16px;
+    }
+    .progress-bar {
+      background: linear-gradient(90deg, #7c3aed, #00ffa3);
+      transition: width 0.5s cubic-bezier(0.4,0,0.2,1);
+      box-shadow: 0 0 10px rgba(124,58,237,0.5);
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #7c3aed, #5b21b6);
+      color: white;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      cursor: pointer;
+      z-index: 10;
+      position: relative;
+    }
+    .btn-primary:hover { background: linear-gradient(135deg, #a855f7, #7c3aed); }
+    .btn-primary:active { transform: scale(0.98); }
+    .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+    @keyframes scan {
+      0%   { top: -2px; }
+      100% { top: 100%; }
+    }
+    .scan-line {
+      position: absolute; width: 100%; height: 2px; left: 0;
+      background: linear-gradient(90deg, transparent, rgba(0,255,163,0.6), transparent);
+      animation: scan 3s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes floatBlob {
+      0%,100% { transform: translate(0,0) scale(1); }
+      33%      { transform: translate(30px,-20px) scale(1.05); }
+      66%      { transform: translate(-20px,15px) scale(0.97); }
+    }
+    .blob  { animation: floatBlob 10s ease-in-out infinite; }
+    .blob2 { animation: floatBlob 14s ease-in-out infinite reverse; }
+    @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(0.85)} }
+    .dot-pulse { animation: pulse 1.5s ease-in-out infinite; }
+    .reveal { opacity:0; transform:translateY(24px); transition: opacity 0.6s ease, transform 0.6s ease; }
+    .reveal.visible { opacity:1; transform:translateY(0); }
+    .badge { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:0.7rem; font-family:'Space Mono',monospace; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; }
+    .badge-pending    { background:rgba(251,191,36,0.1);  border:1px solid rgba(251,191,36,0.3);  color:#fbbf24; }
+    .badge-scraping   { background:rgba(59,130,246,0.1);  border:1px solid rgba(59,130,246,0.3);  color:#60a5fa; }
+    .badge-processing { background:rgba(124,58,237,0.1);  border:1px solid rgba(124,58,237,0.3);  color:#a78bfa; }
+    .badge-exporting  { background:rgba(0,212,255,0.1);   border:1px solid rgba(0,212,255,0.3);   color:#00d4ff; }
+    .badge-completed  { background:rgba(0,255,163,0.1);   border:1px solid rgba(0,255,163,0.3);   color:#00ffa3; }
+    .badge-failed     { background:rgba(239,68,68,0.1);   border:1px solid rgba(239,68,68,0.3);   color:#f87171; }
+    .badge-cancelled  { background:rgba(100,100,130,0.1); border:1px solid rgba(100,100,130,0.3); color:#9191b0; }
+    nav { backdrop-filter: blur(20px); background: rgba(10,10,20,0.85); border-bottom: 1px solid var(--border-dim); }
+    input[type="range"] {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 4px; background: var(--border-dim); border-radius: 2px; outline: none; cursor: pointer;
+    }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+      background: #a855f7; cursor: pointer; box-shadow: 0 0 6px rgba(124,58,237,0.5);
+    }
+    input[type="range"]::-moz-range-thumb {
+      width: 16px; height: 16px; border-radius: 50%; background: #a855f7; cursor: pointer; border: none;
+    }
+    /*
+      BUG FIX #3: Canvas and decorative layers must NEVER intercept pointer events.
+      z-index:0 + pointer-events:none on canvas; interactive content at z-index:10+
+    */
+    #bg-canvas { position:fixed; inset:0; z-index:0; pointer-events:none; }
+    nav  { position:fixed; top:0; left:0; right:0; z-index:50; }
+    main { position:relative; z-index:10; }
+    .interactive-layer { position:relative; z-index:10; }
+    textarea { resize: vertical; }
+    #examples-list { display:none; }
+    #examples-list.open { display:block; }
+    .grad-text {
+      background: linear-gradient(135deg, #7c3aed, #00ffa3);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    @keyframes slideUp { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+    .slide-up { animation: slideUp 0.4s ease forwards; }
+    .format-btn {
+      position:relative; display:flex; align-items:center; gap:12px; padding:16px;
+      border-radius:12px; border:1px solid var(--border-dim); background:rgba(22,22,40,0.6);
+      cursor:pointer; transition:all 0.2s ease; text-align:left;
+    }
+    .format-btn:hover:not(:disabled) { border-color: rgba(124,58,237,0.5); }
+    .format-btn.active { border-color: var(--purple); background: rgba(124,58,237,0.12); }
+    .format-btn:disabled { opacity:0.5; cursor:not-allowed; }
+    .format-dot { position:absolute; top:8px; right:8px; width:8px; height:8px; border-radius:50%; background:#c084fc; box-shadow:0 0 6px #c084fc; display:none; }
+    .format-btn.active .format-dot { display:block; }
+  </style>
+</head>
+<body>
+  <!-- BUG FIX: canvas is pointer-events:none — decorative ONLY, never blocks input -->
+  <canvas id="bg-canvas"></canvas>
+
+  <!-- NAVIGATION -->
+  <nav>
+    <div class="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div class="flex items-center gap-2.5">
+        <div class="w-6 h-6 rounded-lg flex items-center justify-center" style="background:rgba(124,58,237,0.2);border:1px solid rgba(124,58,237,0.4)">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+        </div>
+        <span class="font-display font-bold text-white text-sm">AIScraper</span>
+      </div>
+      <div class="hidden md:flex items-center gap-6 text-sm text-gray-400">
+        <a href="#scraper" class="hover:text-white transition-colors">Scraper</a>
+        <a href="#architecture" class="hover:text-white transition-colors">Architecture</a>
+        <a href="https://github.com" target="_blank" rel="noopener"
+           class="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-700 hover:border-gray-500 hover:text-white transition-all text-xs font-mono">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+          GitHub
+        </a>
+      </div>
+      <button id="menu-btn" class="md:hidden text-gray-400 hover:text-white" aria-label="Menu">
+        <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="17" y2="6"/><line x1="3" y1="12" x2="17" y2="12"/><line x1="3" y1="18" x2="17" y2="18"/></svg>
+      </button>
+    </div>
+    <div id="mobile-menu" class="hidden border-t border-gray-800 px-6 py-4 flex-col gap-4 text-sm text-gray-400">
+      <a href="#scraper" class="hover:text-white">Scraper</a>
+      <a href="#architecture" class="hover:text-white">Architecture</a>
+      <a href="https://github.com" class="text-purple-400">GitHub</a>
+    </div>
+  </nav>
+
+  <main class="bg-grid pt-14">
+
+    <!-- HERO -->
+    <section class="relative overflow-hidden py-20 px-6">
+      <!-- Blobs: pointer-events:none so they NEVER block inputs -->
+      <div class="blob pointer-events-none absolute -top-32 -left-32 w-80 h-80 rounded-full opacity-20" style="background:radial-gradient(circle,#7c3aed 0%,transparent 70%);filter:blur(60px)"></div>
+      <div class="blob2 pointer-events-none absolute -bottom-32 -right-32 w-96 h-96 rounded-full opacity-15" style="background:radial-gradient(circle,#00ffa3 0%,transparent 70%);filter:blur(60px)"></div>
+      <div class="relative z-10 max-w-4xl mx-auto text-center">
+        <div class="reveal inline-flex items-center gap-2 px-4 py-1.5 rounded-full border text-xs font-mono uppercase tracking-widest mb-6" style="border-color:rgba(124,58,237,0.3);background:rgba(124,58,237,0.1);color:#a78bfa">
+          <span class="w-1.5 h-1.5 rounded-full bg-purple-400 dot-pulse inline-block"></span>
+          Open Source &middot; Local AI &middot; No API Keys
+        </div>
+        <h1 class="reveal font-display font-extrabold tracking-tight mb-4" style="font-size:clamp(3rem,8vw,5.5rem);line-height:1;animation-delay:0.1s">
+          <span class="text-white">AI</span><span class="mx-3 grad-text">Scraper</span>
+        </h1>
+        <p class="reveal text-gray-400 max-w-xl mx-auto leading-relaxed text-lg" style="animation-delay:0.2s">
+          Extract structured datasets from any website using local AI.<br/>
+          <span class="text-gray-600 text-base">Powered by TinyLlama, FAISS &amp; Playwright.</span>
+        </p>
+        <div class="reveal flex items-center justify-center gap-4 mt-6 text-sm text-gray-500" style="animation-delay:0.3s">
+          <a href="https://github.com" target="_blank" rel="noopener" class="flex items-center gap-1.5 hover:text-white transition-colors">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z"/></svg>
+            GitHub
+          </a>
+          <span class="text-gray-800">&middot;</span>
+          <a href="#scraper" class="hover:text-white transition-colors">Try the Demo &darr;</a>
+        </div>
+      </div>
+    </section>
+
+    <!-- FEATURE PILLS -->
+    <section class="px-6 pb-10">
+      <div class="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div class="reveal card p-4 flex flex-col gap-2">
+          <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 1v4M12 19v4M4.22 4.22l2.83 2.83M16.95 16.95l2.83 2.83M1 12h4M19 12h4M4.22 19.78l2.83-2.83M16.95 7.05l2.83-2.83"/></svg>
+          <div><p class="font-semibold text-sm text-white">Local AI</p><p class="text-xs text-gray-500">TinyLlama on your hardware</p></div>
+        </div>
+        <div class="reveal card p-4 flex flex-col gap-2" style="animation-delay:0.05s">
+          <svg class="w-5 h-5" style="color:#00ffa3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+          <div><p class="font-semibold text-sm text-white">No API Keys</p><p class="text-xs text-gray-500">100% free, open-source</p></div>
+        </div>
+        <div class="reveal card p-4 flex flex-col gap-2" style="animation-delay:0.1s">
+          <svg class="w-5 h-5" style="color:#00d4ff" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6"/><rect x="14" y="4" width="6" height="6"/><rect x="4" y="14" width="6" height="6"/><circle cx="17" cy="17" r="3"/></svg>
+          <div><p class="font-semibold text-sm text-white">FAISS + ST</p><p class="text-xs text-gray-500">Semantic vector search</p></div>
+        </div>
+        <div class="reveal card p-4 flex flex-col gap-2" style="animation-delay:0.15s">
+          <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+          <div><p class="font-semibold text-sm text-white">Any Format</p><p class="text-xs text-gray-500">Export as Excel or Word</p></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- SCRAPER UI -->
+    <!--
+      BUG FIX #4: The original deployed page had NO input fields at all — the
+      interactive scraper UI existed only in the unbuilt Next.js React source.
+      This section ports the full ScrapeForm + JobProgress components to vanilla
+      HTML/JS so the page is interactive on GitHub Pages with zero build step.
+
+      BUG FIX #5: All calls to localhost:8000 (FastAPI) are replaced by a
+      client-side simulation so the demo runs entirely in the browser.
+    -->
+    <section id="scraper" class="px-6 pb-16">
+      <div class="max-w-6xl mx-auto">
+        <div class="reveal text-center mb-8">
+          <div class="inline-block font-mono text-xs uppercase tracking-widest mb-2" style="color:rgba(124,58,237,0.6)">Interactive Demo</div>
+          <h2 class="font-display font-bold text-white text-2xl md:text-3xl">Try the Scraper</h2>
+          <p class="text-gray-500 text-sm mt-2">Frontend demo — configure a job and see a simulated extraction pipeline.</p>
+        </div>
+        <div class="grid md:grid-cols-2 gap-6">
+
+          <!-- LEFT: FORM -->
+          <div class="gradient-border">
+            <div class="card rounded-[15px] p-6 h-full">
+              <div class="flex items-center gap-2 mb-6">
+                <div class="w-2.5 h-2.5 rounded-full bg-red-500"></div>
+                <div class="w-2.5 h-2.5 rounded-full bg-yellow-500"></div>
+                <div class="w-2.5 h-2.5 rounded-full" style="background:#00ffa3"></div>
+                <span class="ml-2 text-xs font-mono text-gray-600">scraper.config</span>
+              </div>
+              <div class="space-y-5 interactive-layer">
+
+                <!-- URL -->
+                <div>
+                  <label class="block text-xs font-mono uppercase tracking-widest mb-2" style="color:#a78bfa">Target URL</label>
+                  <div class="relative">
+                    <svg class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style="color:#7c3aed;z-index:11" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M2 12h20M12 2a15 15 0 010 20M12 2a15 15 0 000 20"/></svg>
+                    <input id="url-input" type="url" placeholder="https://example.com"
+                      class="input-field w-full pl-11 pr-4 py-3.5 rounded-xl text-sm font-mono"
+                      autocomplete="off" spellcheck="false" />
+                  </div>
+                </div>
+
+                <!-- Instructions -->
+                <div>
+                  <div class="flex items-center justify-between mb-2">
+                    <label class="block text-xs font-mono uppercase tracking-widest" style="color:#a78bfa">Extraction Instructions</label>
+                    <button id="examples-btn" type="button" class="text-xs flex items-center gap-1 transition-colors hover:text-white" style="color:#7c3aed;cursor:pointer">
+                      Examples
+                      <svg id="examples-chevron" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" style="transition:transform 0.2s" viewBox="0 0 12 12"><path d="M2 4l4 4 4-4"/></svg>
+                    </button>
+                  </div>
+                  <div id="examples-list" class="mb-3 rounded-xl overflow-hidden" style="border:1px solid var(--border-dim)">
+                    <button type="button" data-example="Extract all product names, prices, and ratings" class="example-item w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:text-white transition-colors border-b font-mono" style="border-color:var(--border-dim);background:var(--bg-overlay)">&#x2192; Extract all product names, prices, and ratings</button>
+                    <button type="button" data-example="Get all article titles, authors, dates, and summaries" class="example-item w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:text-white transition-colors border-b font-mono" style="border-color:var(--border-dim);background:var(--bg-overlay)">&#x2192; Get all article titles, authors, dates, and summaries</button>
+                    <button type="button" data-example="Collect all job listings with title, company, location, and salary" class="example-item w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:text-white transition-colors border-b font-mono" style="border-color:var(--border-dim);background:var(--bg-overlay)">&#x2192; Collect all job listings with title, company, location, and salary</button>
+                    <button type="button" data-example="Extract all team member names, roles, and bios" class="example-item w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:text-white transition-colors border-b font-mono" style="border-color:var(--border-dim);background:var(--bg-overlay)">&#x2192; Extract all team member names, roles, and bios</button>
+                    <button type="button" data-example="Get all research papers with title, abstract, and authors" class="example-item w-full text-left px-4 py-2.5 text-xs text-gray-300 hover:text-white transition-colors font-mono" style="background:var(--bg-overlay)">&#x2192; Get all research papers with title, abstract, and authors</button>
+                  </div>
+                  <textarea id="instructions-input" rows="4"
+                    placeholder="Describe what data to extract — e.g. 'Extract all product names, prices, and descriptions'"
+                    class="input-field w-full px-4 py-3.5 rounded-xl text-sm font-mono"
+                    spellcheck="false"></textarea>
+                  <p class="text-xs mt-1 font-mono" style="color:var(--text-dim)">Be specific. The AI uses your instructions to extract and structure the data.</p>
+                </div>
+
+                <!-- Output Format -->
+                <div>
+                  <label class="block text-xs font-mono uppercase tracking-widest mb-3" style="color:#a78bfa">Output Format</label>
+                  <div class="grid grid-cols-2 gap-3">
+                    <button type="button" id="fmt-excel" class="format-btn active" data-format="excel">
+                      <div class="format-dot"></div>
+                      <svg class="w-5 h-5 flex-shrink-0" style="color:#00ffa3" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6"/><path d="M8 13l2 4 4-6"/></svg>
+                      <div><div class="text-sm font-semibold text-white">Excel</div><div class="text-xs font-mono" style="color:var(--text-dim)">.xlsx spreadsheet</div></div>
+                    </button>
+                    <button type="button" id="fmt-word" class="format-btn" data-format="word">
+                      <div class="format-dot"></div>
+                      <svg class="w-5 h-5 flex-shrink-0" style="color:#60a5fa" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><path d="M14 2v6h6M16 13H8M16 17H8M10 9H8"/></svg>
+                      <div><div class="text-sm font-semibold text-white">Word</div><div class="text-xs font-mono" style="color:var(--text-dim)">.docx document</div></div>
+                    </button>
+                  </div>
+                </div>
+
+                <!-- Max Pages -->
+                <div>
+                  <label class="block text-xs font-mono uppercase tracking-widest mb-2" style="color:#a78bfa">
+                    Max Pages to Scrape: <span id="pages-display" style="color:#00ffa3">1</span>
+                  </label>
+                  <input type="range" id="pages-slider" min="1" max="10" step="1" value="1" class="w-full" />
+                  <div class="flex justify-between text-xs font-mono mt-1" style="color:var(--text-dim)">
+                    <span>1 page</span><span>10 pages</span>
+                  </div>
+                </div>
+
+                <!-- Submit / Cancel -->
+                <div class="pt-2">
+                  <button id="submit-btn" type="button" class="btn-primary w-full py-4 rounded-xl text-sm font-bold tracking-wide flex items-center justify-center gap-2">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                    Start Extraction
+                  </button>
+                  <button id="cancel-btn" type="button" class="hidden w-full py-4 rounded-xl border text-sm font-semibold transition-all mt-0" style="border-color:rgba(239,68,68,0.4);color:#f87171;cursor:pointer">
+                    Cancel Job
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- RIGHT: PROGRESS / IDLE -->
+          <div class="card p-6 relative overflow-hidden" id="right-panel">
+
+            <!-- Idle state -->
+            <div id="idle-pane" class="h-full flex flex-col items-center justify-center text-center py-8">
+              <div class="w-20 h-20 rounded-2xl border flex items-center justify-center mb-4" style="border-color:var(--border-dim);background:rgba(124,58,237,0.1)">
+                <svg class="w-10 h-10 text-purple-400" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M12 2a10 10 0 100 20 10 10 0 000-20z"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r=".5" fill="currentColor"/></svg>
+              </div>
+              <h3 class="font-display font-bold text-xl mb-2 text-white">Ready to Extract</h3>
+              <p class="text-sm max-w-xs leading-relaxed" style="color:var(--text-dim)">
+                Configure your scraping job on the left and click
+                <span class="text-purple-400">"Start Extraction"</span>. Live progress will appear here.
+              </p>
+              <div class="mt-6 grid grid-cols-3 gap-3 w-full max-w-xs">
+                <div class="flex flex-col items-center gap-1">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold font-mono" style="background:rgba(124,58,237,0.2);color:#c084fc;border:1px solid rgba(124,58,237,0.3)">1</div>
+                  <span class="text-xs font-mono" style="color:var(--text-dim)">Scrape</span>
+                </div>
+                <div class="flex flex-col items-center gap-1">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold font-mono" style="background:rgba(124,58,237,0.2);color:#c084fc;border:1px solid rgba(124,58,237,0.3)">2</div>
+                  <span class="text-xs font-mono" style="color:var(--text-dim)">Embed</span>
+                </div>
+                <div class="flex flex-col items-center gap-1">
+                  <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold font-mono" style="background:rgba(124,58,237,0.2);color:#c084fc;border:1px solid rgba(124,58,237,0.3)">3</div>
+                  <span class="text-xs font-mono" style="color:var(--text-dim)">Export</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Progress pane (hidden until job starts) -->
+            <div id="progress-pane" class="hidden space-y-5 slide-up">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-2.5">
+                  <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+                  <span class="font-display font-bold text-lg">Extraction Progress</span>
+                </div>
+                <span id="status-badge" class="badge badge-pending">
+                  <span class="w-1.5 h-1.5 rounded-full bg-current dot-pulse inline-block"></span>
+                  <span id="badge-label">Pending</span>
+                </span>
+              </div>
+              <div class="rounded-full overflow-hidden h-2" style="background:rgba(42,42,74,0.8)">
+                <div id="prog-bar" class="progress-bar h-full rounded-full" style="width:0%"></div>
+              </div>
+              <p id="prog-pct" class="text-xs font-mono text-right" style="color:var(--text-dim);margin-top:-6px">0%</p>
+              <div class="rounded-xl px-4 py-3" style="background:rgba(15,15,30,0.8);border:1px solid var(--border-dim)">
+                <p id="current-msg" class="text-sm font-mono text-gray-300">
+                  <span class="w-2 h-2 rounded-full bg-purple-400 dot-pulse inline-block mr-2"></span>Initializing&hellip;
+                </p>
+                <p id="current-step" class="hidden text-xs font-mono mt-1" style="color:var(--text-dim)"></p>
+              </div>
+              <div id="log-container" class="rounded-xl p-4 overflow-y-auto relative"
+                style="background:rgba(0,0,0,0.5);border:1px solid var(--border-dim);height:180px;font-family:'Space Mono',monospace;font-size:0.75rem;line-height:1.6">
+                <div class="scan-line opacity-10 pointer-events-none"></div>
+                <p id="log-empty" class="text-gray-600">$ waiting for output...</p>
+                <div id="log-lines"></div>
+                <div id="log-cursor" class="hidden text-xs mt-1">
+                  <span class="text-purple-500">&rsaquo; </span><span class="text-green-400 dot-pulse">&#9608;</span>
+                </div>
+              </div>
+
+              <!-- Success -->
+              <div id="success-pane" class="hidden rounded-xl p-5 space-y-4" style="border:1px solid rgba(0,255,163,0.3);background:rgba(0,255,163,0.05)">
+                <div class="flex items-center gap-3">
+                  <svg class="w-6 h-6 flex-shrink-0" style="color:#00ffa3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                  <div>
+                    <p class="font-bold text-white">Extraction Complete!</p>
+                    <p id="rows-count" class="text-sm font-mono mt-0.5" style="color:#00ffa3"></p>
+                  </div>
+                </div>
+                <div class="flex gap-3">
+                  <button id="download-btn" type="button" class="flex-1 flex items-center justify-center gap-2 py-3 rounded-xl font-bold text-sm text-black transition-all hover:opacity-90" style="background:linear-gradient(135deg,#00ffa3,#00d4ff);cursor:pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    Download File
+                  </button>
+                  <button id="reset-btn-success" type="button" class="px-4 py-3 rounded-xl border transition-all hover:text-white" style="border-color:var(--border-dim);color:var(--text-dim);cursor:pointer">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Error -->
+              <div id="error-pane" class="hidden rounded-xl p-5 space-y-3" style="border:1px solid rgba(239,68,68,0.3);background:rgba(239,68,68,0.05)">
+                <div class="flex items-center gap-3">
+                  <svg class="w-5 h-5 text-red-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+                  <p class="font-bold text-red-300">Extraction Failed</p>
+                </div>
+                <p id="error-msg" class="text-xs font-mono text-red-400 p-3 rounded-lg" style="background:rgba(0,0,0,0.3)"></p>
+                <button id="reset-btn-error" type="button" class="w-full py-2.5 rounded-xl border text-sm font-semibold flex items-center justify-center gap-2 transition-all" style="border-color:rgba(239,68,68,0.3);color:#f87171;cursor:pointer">
+                  <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 102.13-9.36L1 10"/></svg>
+                  Try Again
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ARCHITECTURE -->
+    <section id="architecture" class="px-6 pb-16">
+      <div class="max-w-6xl mx-auto">
+        <div class="reveal card p-6 rounded-2xl">
+          <h3 class="text-xs font-mono uppercase tracking-widest mb-5" style="color:rgba(124,58,237,0.7)">Pipeline Architecture</h3>
+          <div class="flex flex-wrap items-center gap-2" id="arch-steps"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- FOOTER -->
+    <footer class="border-t px-6 py-10" style="border-color:var(--border-dim)">
+      <div class="max-w-6xl mx-auto">
+        <div class="grid md:grid-cols-3 gap-8 mb-8">
+          <div>
+            <div class="flex items-center gap-2 mb-3">
+              <div class="w-5 h-5 rounded flex items-center justify-center" style="background:rgba(124,58,237,0.2);border:1px solid rgba(124,58,237,0.4)">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#a855f7" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+              </div>
+              <span class="font-display font-bold text-white text-sm">AIScraper</span>
+            </div>
+            <p class="text-sm leading-relaxed max-w-xs" style="color:var(--text-muted)">Fully automated web scraping powered by local AI. Extract, process, and deploy data at scale.</p>
+          </div>
+          <div>
+            <div class="font-mono text-xs uppercase tracking-widest mb-3" style="color:var(--text-dim)">Project</div>
+            <ul class="space-y-2 text-sm" style="color:var(--text-muted)">
+              <li><a href="https://github.com" class="hover:text-white transition-colors">Repository</a></li>
+              <li><a href="https://github.com" class="hover:text-white transition-colors">Documentation</a></li>
+              <li><a href="https://github.com" class="hover:text-white transition-colors">Releases</a></li>
+              <li><a href="https://github.com" class="hover:text-white transition-colors">Contributing</a></li>
+            </ul>
+          </div>
+          <div>
+            <div class="font-mono text-xs uppercase tracking-widest mb-3" style="color:var(--text-dim)">Stack</div>
+            <!-- BUG FIX #6: Original footer had broken JS template literal rendered as raw text.
+                 Stack tags are now rendered by JavaScript in the DOMContentLoaded handler below. -->
+            <div id="stack-tags" class="flex flex-wrap gap-2"></div>
+          </div>
+        </div>
+        <div class="border-t pt-6 flex flex-col md:flex-row items-center justify-between gap-3 text-xs font-mono" style="border-color:var(--border-dim);color:var(--text-dim)">
+          <span>&copy; 2024 AI Web Scraper. MIT License.</span>
+          <div class="flex items-center gap-1.5">
+            <span class="w-1.5 h-1.5 rounded-full dot-pulse inline-block" style="background:#00ffa3"></span>
+            <span>All systems operational</span>
+          </div>
+        </div>
+      </div>
+    </footer>
+  </main>
+
+  <script>
+  (function () {
+    'use strict';
+
+    /* ── Particle canvas (decorative only) ── */
+    var canvas = document.getElementById('bg-canvas');
+    var ctx    = canvas.getContext('2d');
+    var W, H, particles = [];
+    function resizeCanvas() { W = canvas.width = window.innerWidth; H = canvas.height = window.innerHeight; }
+    function initParticles() {
+      particles = [];
+      var n = Math.min(Math.floor(W * H / 14000), 70);
+      for (var i = 0; i < n; i++) {
+        particles.push({ x:Math.random()*W, y:Math.random()*H, r:Math.random()*1.4+0.3,
+          vx:(Math.random()-0.5)*0.18, vy:(Math.random()-0.5)*0.18,
+          op:Math.random()*0.3+0.07,
+          col:['#7c3aed','#00ffa3','#00d4ff'][Math.floor(Math.random()*3)] });
+      }
+    }
+    function drawParticles() {
+      ctx.clearRect(0,0,W,H);
+      for (var i=0;i<particles.length;i++) {
+        var p=particles[i]; p.x+=p.vx; p.y+=p.vy;
+        if(p.x<0)p.x=W; if(p.x>W)p.x=0; if(p.y<0)p.y=H; if(p.y>H)p.y=0;
+        ctx.beginPath(); ctx.arc(p.x,p.y,p.r,0,Math.PI*2);
+        ctx.fillStyle=p.col; ctx.globalAlpha=p.op; ctx.fill();
+        for(var j=i+1;j<particles.length;j++){
+          var q=particles[j], dx=p.x-q.x, dy=p.y-q.y, d=Math.sqrt(dx*dx+dy*dy);
+          if(d<90){ctx.beginPath();ctx.moveTo(p.x,p.y);ctx.lineTo(q.x,q.y);
+            ctx.strokeStyle='#7c3aed';ctx.globalAlpha=(1-d/90)*0.04;ctx.lineWidth=0.5;ctx.stroke();}
+        }
+      }
+      ctx.globalAlpha=1;
+      requestAnimationFrame(drawParticles);
+    }
+    resizeCanvas(); initParticles(); drawParticles();
+    window.addEventListener('resize',function(){resizeCanvas();initParticles();});
+
+    /* ── Scroll reveal ── */
+    document.querySelectorAll('.reveal').forEach(function(el){
+      new IntersectionObserver(function(entries,obs){
+        entries.forEach(function(e){if(e.isIntersecting){e.target.classList.add('visible');obs.unobserve(e.target);}});
+      },{threshold:0.1}).observe(el);
+    });
+
+    /* ── Mobile menu ── */
+    document.getElementById('menu-btn').addEventListener('click', function(){
+      var m=document.getElementById('mobile-menu');
+      var hidden=m.classList.toggle('hidden');
+      m.style.display = hidden ? '' : 'flex';
+    });
+
+    /* ── Stack tags (FIX: was broken template literal in original) ── */
+    var tags=['FastAPI','Next.js','LangChain','Playwright','ChromaDB','Redis','Docker'];
+    var stackEl=document.getElementById('stack-tags');
+    tags.forEach(function(t){
+      var s=document.createElement('span');
+      s.className='text-xs font-mono px-2 py-1 rounded';
+      s.style.cssText='background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.07);color:#9191b0';
+      s.textContent=t; stackEl.appendChild(s);
+    });
+
+    /* ── Architecture diagram ── */
+    var archSteps=[
+      {icon:'&#x1F310;',label:'URL Input',      sub:'Next.js UI',            color:'#7c3aed'},
+      {icon:'&#x1F3AD;',label:'Playwright',     sub:'JS Rendering',          color:'#3b82f6'},
+      {icon:'&#x1F9F9;',label:'BeautifulSoup',  sub:'HTML Parsing',          color:'#06b6d4'},
+      {icon:'&#x1F522;',label:'Embeddings',     sub:'sentence-transformers', color:'#8b5cf6'},
+      {icon:'&#x1F5C4;',label:'FAISS',          sub:'Vector Search',         color:'#a855f7'},
+      {icon:'&#x1F916;',label:'TinyLlama',      sub:'Data Extraction',       color:'#ec4899'},
+      {icon:'&#x1F4CA;',label:'Export',         sub:'Excel / Word',          color:'#00ffa3'},
+    ];
+    var archEl=document.getElementById('arch-steps');
+    archSteps.forEach(function(step,i){
+      var div=document.createElement('div');
+      div.className='flex items-center gap-2';
+      div.innerHTML=
+        '<div class="flex flex-col items-center gap-1 px-3 py-2.5 rounded-xl text-center" style="min-width:78px;border:1px solid '+step.color+'40;background:'+step.color+'10">'+
+          '<span class="text-lg">'+step.icon+'</span>'+
+          '<span class="text-xs font-bold text-white leading-tight">'+step.label+'</span>'+
+          '<span class="font-mono leading-tight" style="color:'+step.color+';font-size:0.6rem">'+step.sub+'</span>'+
+        '</div>'+
+        (i<archSteps.length-1?'<svg width="20" height="20" viewBox="0 0 20 20" fill="none" style="flex-shrink:0"><path d="M4 10h12M12 5l5 5-5 5" stroke="#4a4a7a" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>':'');
+      archEl.appendChild(div);
+    });
+
+    /* ── Format buttons ── */
+    var selectedFormat='excel';
+    document.querySelectorAll('.format-btn').forEach(function(btn){
+      btn.addEventListener('click',function(){
+        if(btn.disabled)return;
+        selectedFormat=btn.dataset.format;
+        document.querySelectorAll('.format-btn').forEach(function(b){b.classList.remove('active');});
+        btn.classList.add('active');
+      });
+    });
+
+    /* ── Pages slider ── */
+    var slider=document.getElementById('pages-slider');
+    var pagesDisplay=document.getElementById('pages-display');
+    slider.addEventListener('input',function(){pagesDisplay.textContent=slider.value;});
+
+    /* ── Examples dropdown ── */
+    var examplesBtn=document.getElementById('examples-btn');
+    var examplesList=document.getElementById('examples-list');
+    var chevron=document.getElementById('examples-chevron');
+    var instructEl=document.getElementById('instructions-input');
+    examplesBtn.addEventListener('click',function(){
+      var open=examplesList.classList.toggle('open');
+      chevron.style.transform=open?'rotate(180deg)':'';
+    });
+    document.querySelectorAll('.example-item').forEach(function(item){
+      item.addEventListener('click',function(){
+        instructEl.value=item.dataset.example;
+        examplesList.classList.remove('open');
+        chevron.style.transform='';
+        instructEl.focus();
+      });
+    });
+
+    /* ────────────────────────────────────────────
+       SIMULATION ENGINE
+       FIX: Replaces localhost:8000 backend calls with a client-side
+       simulation so the full UI pipeline works on GitHub Pages.
+    ──────────────────────────────────────────── */
+    var isRunning=false, simTimer=null;
+    var urlInput       = document.getElementById('url-input');
+    var submitBtn      = document.getElementById('submit-btn');
+    var cancelBtn      = document.getElementById('cancel-btn');
+    var progBar        = document.getElementById('prog-bar');
+    var progPct        = document.getElementById('prog-pct');
+    var currentMsg     = document.getElementById('current-msg');
+    var currentStep    = document.getElementById('current-step');
+    var statusBadge    = document.getElementById('status-badge');
+    var badgeLabel     = document.getElementById('badge-label');
+    var logEmpty       = document.getElementById('log-empty');
+    var logLines       = document.getElementById('log-lines');
+    var logCursor      = document.getElementById('log-cursor');
+    var logContainer   = document.getElementById('log-container');
+    var rowsCount      = document.getElementById('rows-count');
+    var errorMsg       = document.getElementById('error-msg');
+    var idlePane       = document.getElementById('idle-pane');
+    var progressPane   = document.getElementById('progress-pane');
+    var successPane    = document.getElementById('success-pane');
+    var errorPane      = document.getElementById('error-pane');
+    var fmtExcel       = document.getElementById('fmt-excel');
+    var fmtWord        = document.getElementById('fmt-word');
+
+    function setFormDisabled(d){
+      urlInput.disabled=d; instructEl.disabled=d; slider.disabled=d;
+      fmtExcel.disabled=d; fmtWord.disabled=d;
+      document.querySelectorAll('.format-btn').forEach(function(b){b.disabled=d;});
+    }
+
+    var statusLabels={pending:'Pending',scraping:'Scraping',processing:'Processing',exporting:'Exporting',completed:'Completed',failed:'Failed',cancelled:'Cancelled'};
+    var pulseStatuses=['pending','scraping','processing','exporting'];
+
+    function setBadge(status){
+      statusBadge.className='badge badge-'+status;
+      var pulse=pulseStatuses.indexOf(status)>-1;
+      statusBadge.innerHTML='<span class="w-1.5 h-1.5 rounded-full bg-current '+(pulse?'dot-pulse':'')+' inline-block"></span>'+(statusLabels[status]||status);
+    }
+
+    function setProgress(pct,msg,step){
+      progBar.style.width=pct+'%';
+      progPct.textContent=pct+'%';
+      currentMsg.innerHTML=(isRunning?'<span class="w-2 h-2 rounded-full bg-purple-400 dot-pulse inline-block mr-2"></span>':'')+msg;
+      if(step){currentStep.textContent='step: '+step;currentStep.classList.remove('hidden');}
+      else{currentStep.classList.add('hidden');}
+    }
+
+    function addLog(line){
+      logEmpty.classList.add('hidden');
+      var div=document.createElement('div');
+      div.className='text-xs leading-relaxed';
+      div.innerHTML='<span class="text-purple-500 select-none">&rsaquo; </span><span class="text-gray-300">'+line+'</span>';
+      logLines.appendChild(div);
+      logContainer.scrollTop=logContainer.scrollHeight;
+    }
+
+    function showProgressPane(){
+      idlePane.classList.add('hidden');
+      progressPane.classList.remove('hidden');
+      successPane.classList.add('hidden');
+      errorPane.classList.add('hidden');
+      logLines.innerHTML='';
+      logEmpty.classList.remove('hidden');
+      logCursor.classList.remove('hidden');
+    }
+
+    function resetUI(){
+      isRunning=false;
+      if(simTimer){clearTimeout(simTimer);simTimer=null;}
+      setFormDisabled(false);
+      submitBtn.classList.remove('hidden');
+      cancelBtn.classList.add('hidden');
+      idlePane.classList.remove('hidden');
+      progressPane.classList.add('hidden');
+      successPane.classList.add('hidden');
+      errorPane.classList.add('hidden');
+    }
+
+    function runSim(url,instructions,format,maxPages){
+      var ext=format==='excel'?'xlsx':'docx';
+      var rows=Math.floor(maxPages*(Math.random()*60+40));
+      var step=0;
+      var stages=[
+        {status:'pending',    pct:5,  msg:'Queuing job&hellip;',                                              step:'init',     log:'[PENDING] Job queued successfully'},
+        {status:'scraping',   pct:15, msg:'Launching headless browser for <code>'+url+'</code>',             step:'browser',  log:'[SCRAPING] Playwright targeting: '+url},
+        {status:'scraping',   pct:28, msg:'Crawling page 1 of '+maxPages+'&hellip;',                         step:'crawl',    log:'[SCRAPING] Rendering JS — waiting for DOMContentLoaded'},
+        {status:'scraping',   pct:40, msg:'Extracting raw HTML content&hellip;',                             step:'html',     log:'[SCRAPING] Fetched '+Math.floor(Math.random()*80+20)+'KB of HTML'},
+        {status:'processing', pct:52, msg:'Running BeautifulSoup parser&hellip;',                            step:'parse',    log:'[PROCESSING] BeautifulSoup parsing complete'},
+        {status:'processing', pct:63, msg:'Generating sentence embeddings&hellip;',                         step:'embed',    log:'[PROCESSING] sentence-transformers encoding '+rows+' text chunks'},
+        {status:'processing', pct:72, msg:'Indexing vectors into FAISS&hellip;',                             step:'index',    log:'[PROCESSING] FAISS index built — running semantic search'},
+        {status:'processing', pct:81, msg:'Running TinyLlama: <em>"'+instructions.slice(0,40)+'&hellip;"</em>', step:'llm', log:'[PROCESSING] LLM extraction — '+rows+' candidate rows identified'},
+        {status:'exporting',  pct:90, msg:'Building '+ext.toUpperCase()+' document&hellip;',                 step:'export',   log:'[EXPORTING] Writing '+rows+' rows to dataset.'+ext},
+        {status:'exporting',  pct:97, msg:'Finalizing export&hellip;',                                       step:'finalize', log:'[EXPORTING] File size: '+(rows*0.8).toFixed(1)+' KB'},
+        {status:'completed',  pct:100,msg:'Extraction complete!',                                            step:'done',     log:'[COMPLETED] dataset.'+ext+' ready — '+rows+' rows extracted'},
+      ];
+      function tick(){
+        if(!isRunning)return;
+        if(step>=stages.length)return;
+        var s=stages[step++];
+        setBadge(s.status);
+        setProgress(s.pct,s.msg,s.step);
+        addLog(s.log);
+        if(s.status==='completed'){
+          logCursor.classList.add('hidden');
+          isRunning=false;
+          setFormDisabled(false);
+          submitBtn.classList.remove('hidden');
+          cancelBtn.classList.add('hidden');
+          rowsCount.innerHTML=rows.toLocaleString()+' rows extracted';
+          successPane.classList.remove('hidden');
+          return;
+        }
+        simTimer=setTimeout(tick,step===1?400:Math.floor(Math.random()*700+600));
+      }
+      tick();
+    }
+
+    /* Submit */
+    submitBtn.addEventListener('click',function(){
+      var url=urlInput.value.trim();
+      var inst=instructEl.value.trim();
+      function flash(el){
+        el.style.borderColor='#f87171';el.style.boxShadow='0 0 0 3px rgba(239,68,68,0.2)';
+        setTimeout(function(){el.style.borderColor='';el.style.boxShadow='';},2000);
+        el.focus();
+      }
+      if(!url){flash(urlInput);return;}
+      if(!inst){flash(instructEl);return;}
+      isRunning=true;
+      setFormDisabled(true);
+      submitBtn.classList.add('hidden');
+      cancelBtn.classList.remove('hidden');
+      showProgressPane();
+      setBadge('pending');
+      setProgress(0,'Starting&hellip;','');
+      runSim(url,inst,selectedFormat,parseInt(slider.value,10));
+    });
+
+    /* Cancel */
+    cancelBtn.addEventListener('click',function(){
+      isRunning=false;
+      if(simTimer){clearTimeout(simTimer);simTimer=null;}
+      logCursor.classList.add('hidden');
+      addLog('[CANCELLED] Job cancelled by user');
+      setBadge('cancelled');
+      setFormDisabled(false);
+      submitBtn.classList.remove('hidden');
+      cancelBtn.classList.add('hidden');
+    });
+
+    /* Reset */
+    document.getElementById('reset-btn-success').addEventListener('click',resetUI);
+    document.getElementById('reset-btn-error').addEventListener('click',resetUI);
+
+    /* Download (demo notice) */
+    document.getElementById('download-btn').addEventListener('click',function(){
+      var ext=selectedFormat==='excel'?'xlsx':'docx';
+      alert('Demo mode: In a live deployment, "dataset.'+ext+'" would download here.\n\nDeploy the FastAPI backend and set NEXT_PUBLIC_API_URL to enable real downloads.');
+    });
+
+    /* Enter on URL → focus instructions */
+    urlInput.addEventListener('keydown',function(e){if(e.key==='Enter'){e.preventDefault();instructEl.focus();}});
+
+  }());
+  </script>
+</body>
+</html>
